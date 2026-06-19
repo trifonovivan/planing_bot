@@ -38,10 +38,24 @@ func TestResolverCornerCases(t *testing.T) {
 			wantSrc:  SourceExplicitOther,
 		},
 		{
+			name:     "direct address with imperative and url",
+			text:     "Ваня, купи на Ozon чай https://Ozon.ru/Product/ABC123",
+			wantID:   3,
+			wantText: "купи на Ozon чай https://Ozon.ru/Product/ABC123",
+			wantSrc:  SourceExplicitOther,
+		},
+		{
 			name:     "gift recipient is not assignee",
 			text:     "купить маме подарок на ДР",
 			wantID:   1,
 			wantText: "купить маме подарок на ДР",
+			wantSrc:  SourceObjectRule,
+		},
+		{
+			name:     "imperative recipient is not assignee",
+			text:     "купи Ване чай",
+			wantID:   1,
+			wantText: "купи Ване чай",
 			wantSrc:  SourceObjectRule,
 		},
 		{

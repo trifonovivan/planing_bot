@@ -198,7 +198,7 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 			Options:  resolution.Options,
 		}
 	}
-	return s.createTaskForResolvedAssignee(ctx, user, workspace, resolution.TaskText, resolution)
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, resolution.TaskText, resolution)
 }
 
 func (s *Service) CreateTaskForAssignee(ctx context.Context, tgUser domain.TelegramUser, text string, assigneeUserID int64) (*CreateTaskResult, error) {
@@ -223,10 +223,10 @@ func (s *Service) CreateTaskForAssignee(ctx context.Context, tgUser domain.Teleg
 		TaskText:       text,
 		Source:         assignee.SourceClarification,
 	}
-	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, resolution)
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, text, resolution)
 }
 
-func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domain.User, workspace *domain.Workspace, text string, resolution assignee.Resolution) (*CreateTaskResult, error) {
+func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domain.User, workspace *domain.Workspace, inputText string, taskText string, resolution assignee.Resolution) (*CreateTaskResult, error) {
 	assigneeUserID := resolution.AssigneeUserID
 	if assigneeUserID == 0 {
 		assigneeUserID = user.ID
@@ -242,7 +242,7 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 
 	location := s.locationForUser(user)
 	parserStart := time.Now()
-	parsed, err := parser.Parse(text, s.now().In(location), location)
+	parsed, err := parser.Parse(taskText, s.now().In(location), location)
 	s.observeParser(parserStart, err)
 	if err != nil {
 		s.logError("parser_failed", err, logging.Fields{
@@ -278,10 +278,14 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 		}
 	}
 	if err := s.store.CreateTaskEvent(ctx, task.ID, user.ID, "created", map[string]any{
-		"source":          "text",
-		"confidence":      parsed.Confidence,
-		"warnings":        parsed.Warnings,
-		"assignee_source": resolution.Source,
+		"source":           "text",
+		"input_text":       inputText,
+		"task_text":        taskText,
+		"confidence":       parsed.Confidence,
+		"warnings":         parsed.Warnings,
+		"assignee_source":  resolution.Source,
+		"assignee_alias":   resolution.MatchedAlias,
+		"assignee_user_id": assigneeUserID,
 	}); err != nil {
 		return nil, fmt.Errorf("create task event: %w", err)
 	}

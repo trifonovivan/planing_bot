@@ -191,6 +191,22 @@ func TestLinkedProfileAssigneeResolution(t *testing.T) {
 	}
 	assertAssignee(t, wake.Task, momUser.ID)
 
+	buyForIvan, err := svc.CreateTaskFromText(ctx, mom, "Ваня, купи на Ozon чай https://Ozon.ru/Product/ABC123")
+	if err != nil {
+		t.Fatalf("buy for Ivan CreateTaskFromText error: %v", err)
+	}
+	assertAssignee(t, buyForIvan.Task, ivanUser.ID)
+	if buyForIvan.Task.CreatorUserID != momUser.ID {
+		t.Fatalf("creator = %d, want %d", buyForIvan.Task.CreatorUserID, momUser.ID)
+	}
+	if buyForIvan.Task.WorkspaceID != store.workspacesByUser[ivanUser.ID].ID {
+		t.Fatalf("workspace = %d, want ivan workspace %d", buyForIvan.Task.WorkspaceID, store.workspacesByUser[ivanUser.ID].ID)
+	}
+	wantTitle := "купи на Ozon чай https://Ozon.ru/Product/ABC123"
+	if buyForIvan.Task.Title != wantTitle {
+		t.Fatalf("buy for Ivan title = %q, want %q", buyForIvan.Task.Title, wantTitle)
+	}
+
 	_, err = svc.CreateTaskFromText(ctx, ivan, "маме документы завтра")
 	var clarification *AssigneeClarificationError
 	if !errors.As(err, &clarification) {

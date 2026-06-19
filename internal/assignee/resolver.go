@@ -86,12 +86,12 @@ func (r Resolver) Resolve(text string) Resolution {
 		return Resolution{AssigneeUserID: r.selfUserID, TaskText: taskText, Source: SourceDefaultSelf}
 	}
 
-	if stripped, ok := stripExplicitSelf(normalized); ok {
+	if stripped, ok := stripExplicitSelf(text); ok {
 		return Resolution{AssigneeUserID: r.selfUserID, TaskText: cleanTaskText(stripped), Source: SourceExplicitSelf}
 	}
 
 	for _, candidate := range r.candidates {
-		if stripped, alias, ok := stripExplicitOther(normalized, candidate.pattern); ok {
+		if stripped, alias, ok := stripExplicitOther(text, candidate.pattern); ok {
 			return Resolution{
 				AssigneeUserID: candidate.UserID,
 				TaskText:       cleanTaskText(stripped),
@@ -195,9 +195,9 @@ func aliasesPattern(aliases []string) string {
 
 func stripExplicitSelf(text string) (string, bool) {
 	patterns := []string{
-		`^(?:напомни|поставь|создай|добавь|запиши)\s+(?:мне|себе)(?:\s+задачу)?\s+(.+)$`,
-		`^(?:мне|себе|для меня)\s+(?:надо|нужно|пора|следует)\s+(.+)$`,
-		`^(?:надо|нужно)\s+(?:мне|себе)\s+(.+)$`,
+		`(?i)^\s*(?:напомни|поставь|создай|добавь|запиши)\s+(?:мне|себе)(?:\s+задачу)?\s+(.+)$`,
+		`(?i)^\s*(?:мне|себе|для меня)\s+(?:надо|нужно|пора|следует)\s+(.+)$`,
+		`(?i)^\s*(?:надо|нужно)\s+(?:мне|себе)\s+(.+)$`,
 	}
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
@@ -211,12 +211,13 @@ func stripExplicitSelf(text string) (string, bool) {
 
 func stripExplicitOther(text string, aliasPattern string) (string, string, bool) {
 	patterns := []string{
-		`^(?:поставь|создай|добавь|запиши)\s+(?:задачу\s+)?(` + aliasPattern + `)(?:\s+задачу)?\s+(.+)$`,
-		`^(?:поставь|создай|добавь|запиши)\s+задачу\s+(` + aliasPattern + `)\s+(.+)$`,
-		`^(?:задача\s+)?для\s+(` + aliasPattern + `)\s*[:,-]?\s+(.+)$`,
-		`^(` + aliasPattern + `)\s+(?:надо|нужно|пора|следует)\s+(.+)$`,
-		`^(` + aliasPattern + `)\s+(?:должен|должна|должны)\s+(.+)$`,
-		`^пусть\s+(` + aliasPattern + `)\s+(.+)$`,
+		`(?i)^\s*(?:поставь|создай|добавь|запиши)\s+(?:задачу\s+)?(` + aliasPattern + `)(?:\s+задачу)?\s+(.+)$`,
+		`(?i)^\s*(?:поставь|создай|добавь|запиши)\s+задачу\s+(` + aliasPattern + `)\s+(.+)$`,
+		`(?i)^\s*(?:задача\s+)?для\s+(` + aliasPattern + `)\s*[:,-]?\s+(.+)$`,
+		`(?i)^\s*(` + aliasPattern + `)\s*(?:[,!:-]\s*)?(?:надо|нужно|пора|следует)\s+(.+)$`,
+		`(?i)^\s*(` + aliasPattern + `)\s*(?:[,!:-]\s*)?(?:должен|должна|должны)\s+(.+)$`,
+		`(?i)^\s*пусть\s+(` + aliasPattern + `)\s+(.+)$`,
+		`(?i)^\s*(` + aliasPattern + `)\s*(?:[,!:-]\s*)?((?:` + imperativeVerbPattern() + `)(?:\s+.+)?)$`,
 	}
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
@@ -229,18 +230,34 @@ func stripExplicitOther(text string, aliasPattern string) (string, string, bool)
 }
 
 func matchObjectRule(text string, aliasPattern string) (string, bool) {
-	verbs := []string{
-		"купить", "заказать", "подарить", "позвонить", "написать", "сказать",
-		"сообщить", "ответить", "передать", "скинуть", "отправить", "разбудить",
-		"встретить", "забрать", "отвезти", "поздравить", "помочь", "привезти",
-	}
-	verbPattern := strings.Join(verbs, "|")
+	verbPattern := objectVerbPattern()
 	re := regexp.MustCompile(`(?:^|[^\pL\pN_])(?:` + verbPattern + `)(?:\s+[^\s,.!?:;]+){0,4}\s+(` + aliasPattern + `)(?:$|[^\pL\pN_])`)
 	match := re.FindStringSubmatch(text)
 	if len(match) == 2 {
 		return match[1], true
 	}
 	return "", false
+}
+
+func objectVerbPattern() string {
+	verbs := []string{
+		"купить", "купи", "заказать", "закажи", "подарить", "подари", "позвонить", "позвони",
+		"написать", "напиши", "сказать", "скажи", "сообщить", "сообщи", "ответить", "ответь",
+		"передать", "передай", "скинуть", "скинь", "отправить", "отправь", "разбудить", "разбуди",
+		"встретить", "встреть", "забрать", "забери", "отвезти", "отвези", "поздравить", "поздравь",
+		"помочь", "помоги", "привезти", "привези",
+	}
+	return strings.Join(verbs, "|")
+}
+
+func imperativeVerbPattern() string {
+	verbs := []string{
+		"купи", "закажи", "оплати", "забери", "привези", "отвези", "позвони", "напиши",
+		"скажи", "сообщи", "ответь", "передай", "скинь", "отправь", "разбуди", "встреть",
+		"поздравь", "помоги", "сделай", "проверь", "запиши", "найди", "посмотри", "зайди",
+		"сходи", "возьми", "подготовь",
+	}
+	return strings.Join(verbs, "|")
 }
 
 func containsAlias(text string, aliasPattern string) bool {
