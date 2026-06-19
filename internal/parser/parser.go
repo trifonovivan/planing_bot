@@ -190,7 +190,7 @@ func stripExplicitReminder(raw string) string {
 }
 
 func parseRelativeDuration(lower string, now time.Time) (*time.Time, []string) {
-	re := regexp.MustCompile(`(?i)(^|[\s,])через\s+(\d+)\s+(минут[а-я]*|час[а-я]*|день|дня|дней|недел[а-я]*)($|[\s,])`)
+	re := regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:(\d+)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`)
 	matches := re.FindAllStringSubmatch(lower, -1)
 	warnings := make([]string, 0)
 	if len(matches) == 0 {
@@ -199,9 +199,13 @@ func parseRelativeDuration(lower string, now time.Time) (*time.Time, []string) {
 	if len(matches) > 1 {
 		warnings = append(warnings, "matched multiple date expressions")
 	}
-	n, err := strconv.Atoi(matches[0][2])
-	if err != nil {
-		return nil, append(warnings, "invalid relative duration")
+	n := 1
+	if matches[0][2] != "" {
+		parsed, err := strconv.Atoi(matches[0][2])
+		if err != nil {
+			return nil, append(warnings, "invalid relative duration")
+		}
+		n = parsed
 	}
 	if n == 0 {
 		warnings = append(warnings, "zero relative duration")
@@ -260,7 +264,7 @@ func parseDate(lower string, now time.Time) (parsedDate, []string) {
 
 func countDateExpressions(lower string) int {
 	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(^|[\s,])через\s+\d+\s+(минут[а-я]*|час[а-я]*|день|дня|дней|недел[а-я]*)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:\d+\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])на\s+выходных($|[\s,])`),
 		regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
@@ -468,7 +472,7 @@ func detectCategory(lower string) (*string, []string) {
 		name     string
 		keywords []string
 	}{
-		{name: "Работа", keywords: []string{"работа", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
+		{name: "Работа", keywords: []string{"работ", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
 		{name: "Учеба", keywords: []string{"учеба", "диплом", "экзамен", "институт"}},
 		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховка", "оплатить"}},
 		{name: "Дача", keywords: []string{"огурцы", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить", "петуни"}},
@@ -513,7 +517,7 @@ func detectRecurrence(lower string) (*domain.RecurrenceRule, parsedClock) {
 func cleanTitle(text string) string {
 	title := text
 	patterns := []string{
-		`(?i)(^|[\s,])через\s+\d+\s+(минут[а-я]*|час[а-я]*|день|дня|дней|недел[а-я]*)($|[\s,])`,
+		`(?i)(^|[\s,])через\s+(?:\d+\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`,
 		`(?i)(^|[\s,])(послезавтра|сегодня|завтра)($|[\s,])`,
 		`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`,
 		`(?i)(^|[\s,])на\s+выходных($|[\s,])`,

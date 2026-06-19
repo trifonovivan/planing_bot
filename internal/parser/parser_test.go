@@ -61,6 +61,15 @@ func TestParseRequiredScenarios(t *testing.T) {
 			wantCat:    "Работа",
 		},
 		{
+			name:       "in one hour without number",
+			text:       "Через час нужно сделать отчет по работе",
+			wantTitle:  "нужно сделать отчет по работе",
+			wantDue:    ptrTime(time.Date(2026, 6, 19, 11, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 19, 10, 0, 0, 0, loc)),
+			wantPrio:   domain.PriorityP3,
+			wantCat:    "Работа",
+		},
+		{
 			name:       "month name",
 			text:       "25 июня в 12:00 врач",
 			wantTitle:  "врач",
@@ -311,6 +320,33 @@ func TestCategoryDetection(t *testing.T) {
 		if got.Category == nil || *got.Category != want {
 			t.Fatalf("Parse(%q).Category = %v, want %q", text, got.Category, want)
 		}
+	}
+}
+
+func TestRelativeDurationWithoutNumber(t *testing.T) {
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 0, 48, 0, 0, loc)
+
+	tests := []struct {
+		text    string
+		wantDue time.Time
+	}{
+		{text: "через минуту проверить духовку", wantDue: time.Date(2026, 6, 20, 0, 49, 0, 0, loc)},
+		{text: "через час сделать отчет", wantDue: time.Date(2026, 6, 20, 1, 48, 0, 0, loc)},
+		{text: "через день сделать отчет", wantDue: time.Date(2026, 6, 21, 23, 59, 0, 0, loc)},
+		{text: "через неделю сделать отчет", wantDue: time.Date(2026, 6, 27, 23, 59, 0, 0, loc)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			got, err := Parse(tt.text, now, loc)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			assertTimePtr(t, "due", got.DueAt, &tt.wantDue)
+			if strings.Contains(strings.ToLower(got.Title), "через") {
+				t.Fatalf("title still contains relative duration: %q", got.Title)
+			}
+		})
 	}
 }
 
