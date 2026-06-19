@@ -347,6 +347,27 @@ func TestRecurrenceDetection(t *testing.T) {
 	assertTimePtr(t, "daytime due", daytime.DueAt, ptrTime(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)))
 }
 
+func TestExplicitReminderClause(t *testing.T) {
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 0, 45, 0, 0, loc) // Saturday.
+
+	got, err := Parse("В воскресение встретить тетю Наташу в Домодедово в 10 утра, напомни об этом в 21:00 в субботу", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if got.Title != "встретить тетю Наташу в Домодедово" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	assertTimePtr(t, "due", got.DueAt, ptrTime(time.Date(2026, 6, 21, 10, 0, 0, 0, loc)))
+	assertTimePtr(t, "remind", got.RemindAt, ptrTime(time.Date(2026, 6, 20, 21, 0, 0, 0, loc)))
+	if hasWarning(got.Warnings, "matched multiple date expressions") {
+		t.Fatalf("unexpected duplicate date warning: %v", got.Warnings)
+	}
+	if hasWarning(got.Warnings, "matched multiple time expressions") {
+		t.Fatalf("unexpected duplicate time warning: %v", got.Warnings)
+	}
+}
+
 func mustLocation(t *testing.T) *time.Location {
 	t.Helper()
 	loc, err := time.LoadLocation("Europe/Moscow")

@@ -44,8 +44,11 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 		return ParseResult{Priority: domain.PriorityP3, Confidence: 0}, ErrEmptyTitle
 	}
 
-	lower := strings.ToLower(raw)
+	explicitReminder, reminderWarnings := parseExplicitReminder(strings.ToLower(raw), now, location)
+	rawForTask := stripExplicitReminder(raw)
+	lower := strings.ToLower(rawForTask)
 	warnings := make([]string, 0)
+	warnings = append(warnings, reminderWarnings...)
 	priority := detectPriority(lower)
 	category, categoryWarnings := detectCategory(lower)
 	warnings = append(warnings, categoryWarnings...)
@@ -92,8 +95,11 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 		dueAt = &due
 		remindAt = &remind
 	}
+	if explicitReminder != nil {
+		remindAt = explicitReminder
+	}
 
-	title := cleanTitle(raw)
+	title := cleanTitle(rawForTask)
 	if title == "" {
 		return ParseResult{
 			Priority:       priority,
@@ -148,6 +154,39 @@ func reminderBeforeDue(due time.Time, now time.Time) time.Time {
 		return now.Add(5 * time.Minute)
 	}
 	return remind
+}
+
+func parseExplicitReminder(lower string, now time.Time, location *time.Location) (*time.Time, []string) {
+	index := strings.Index(lower, "напомни")
+	if index < 0 {
+		return nil, nil
+	}
+	clause := lower[index:]
+	clock, clockWarnings := parseClock(clause)
+	warnings := append([]string{}, clockWarnings...)
+	if !clock.found {
+		return nil, append(warnings, "invalid reminder expression")
+	}
+	date, dateWarnings := parseDate(clause, now)
+	warnings = append(warnings, dateWarnings...)
+	if date.found {
+		remind := time.Date(date.value.Year(), date.value.Month(), date.value.Day(), clock.hour, clock.minute, 0, 0, location)
+		return &remind, warnings
+	}
+	remind := time.Date(now.Year(), now.Month(), now.Day(), clock.hour, clock.minute, 0, 0, location)
+	if !remind.After(now) {
+		remind = remind.AddDate(0, 0, 1)
+	}
+	return &remind, warnings
+}
+
+func stripExplicitReminder(raw string) string {
+	lower := strings.ToLower(raw)
+	index := strings.Index(lower, "напомни")
+	if index < 0 {
+		return raw
+	}
+	return strings.Trim(raw[:index], " \t\r\n,")
 }
 
 func parseRelativeDuration(lower string, now time.Time) (*time.Time, []string) {
@@ -222,7 +261,7 @@ func parseDate(lower string, now time.Time) (parsedDate, []string) {
 func countDateExpressions(lower string) int {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(^|[\s,])через\s+\d+\s+(минут[а-я]*|час[а-я]*|день|дня|дней|недел[а-я]*)($|[\s,])`),
-		regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])на\s+выходных($|[\s,])`),
 		regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
 		regexp.MustCompile(`\d{1,2}\.\d{1,2}(?:\.\d{4})?`),
@@ -253,7 +292,7 @@ func parseWeekday(lower string, now time.Time) (time.Time, bool) {
 		return nextWeekday(now, time.Saturday), true
 	}
 
-	re := regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)($|[\s,])`)
+	re := regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`)
 	match := re.FindStringSubmatch(lower)
 	if len(match) == 0 {
 		return time.Time{}, false
@@ -267,6 +306,7 @@ func parseWeekday(lower string, now time.Time) (time.Time, bool) {
 		"пятницу":     time.Friday,
 		"субботу":     time.Saturday,
 		"воскресенье": time.Sunday,
+		"воскресение": time.Sunday,
 	}
 	target, ok := targets[match[3]]
 	if !ok {
@@ -475,14 +515,14 @@ func cleanTitle(text string) string {
 	patterns := []string{
 		`(?i)(^|[\s,])через\s+\d+\s+(минут[а-я]*|час[а-я]*|день|дня|дней|недел[а-я]*)($|[\s,])`,
 		`(?i)(^|[\s,])(послезавтра|сегодня|завтра)($|[\s,])`,
-		`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)($|[\s,])`,
+		`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`,
 		`(?i)(^|[\s,])на\s+выходных($|[\s,])`,
 		`\d{4}-\d{2}-\d{2}`,
 		`(^|[\s,])\d{1,2}\.\d{1,2}(?:\.\d{4})?($|[\s,])`,
 		`(?i)(^|[\s,])\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)($|[\s,])`,
 		`(?i)(^|[\s,])(в|к|до)\s+\d{1,2}(?::\d{2})?($|[\s,])`,
 		`(^|[\s,])\d{1,2}:\d{2}($|[\s,])`,
-		`(?i)(^|[\s,])(утром|днём|днем|вечером|ночью)($|[\s,])`,
+		`(?i)(^|[\s,])(утром|утра|днём|днем|дня|вечером|вечера|ночью|ночи)($|[\s,])`,
 		`(?i)(^|[\s,])(каждый\s+день|ежедневно|каждое\s+утро|каждый\s+вечер)($|[\s,])`,
 		`(?i)(^|[\s,])(не\s+срочно)($|[\s,])`,
 		`(?i)(^|[\s,])(очень\s+срочно|сегодня\s+обязательно|срочно|обязательно|asap|горит|важно|желательно|на\s+неделе|когда-нибудь|потом|идея|someday)($|[\s,])`,
