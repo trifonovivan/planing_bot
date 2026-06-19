@@ -34,6 +34,12 @@ type parsedClock struct {
 	found  bool
 }
 
+type explicitReminderSpec struct {
+	at               *time.Time
+	beforeDue        *time.Duration
+	previousDayClock parsedClock
+}
+
 func Parse(text string, now time.Time, location *time.Location) (ParseResult, error) {
 	if location == nil {
 		location = time.Local
@@ -44,8 +50,8 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 		return ParseResult{Priority: domain.PriorityP3, Confidence: 0}, ErrEmptyTitle
 	}
 
-	explicitReminder, reminderWarnings := parseExplicitReminder(strings.ToLower(raw), now, location)
-	rawForTask := stripExplicitReminder(raw)
+	explicitReminder, reminderWarnings := parseExplicitReminder(raw, now, location)
+	rawForTask := normalizeTaskText(stripExplicitReminder(raw))
 	lower := strings.ToLower(rawForTask)
 	warnings := make([]string, 0)
 	warnings = append(warnings, reminderWarnings...)
@@ -89,14 +95,30 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 		remind := reminderBeforeDue(due, now)
 		remindAt = &remind
 	}
-	if recurrenceRule != nil && dueAt == nil && remindAt == nil {
-		remind := nextDailyReminder(now, location, recurrenceClock)
+	if recurrenceRule != nil && exactDue == nil && !date.found {
+		scheduleClock := recurrenceClock
+		if clock.found {
+			scheduleClock = clock
+		}
+		remind := nextDailyReminder(now, location, scheduleClock)
 		due := time.Date(remind.Year(), remind.Month(), remind.Day(), 23, 59, 0, 0, location)
 		dueAt = &due
 		remindAt = &remind
 	}
 	if explicitReminder != nil {
-		remindAt = explicitReminder
+		switch {
+		case explicitReminder.at != nil:
+			remindAt = explicitReminder.at
+		case explicitReminder.beforeDue != nil && dueAt != nil:
+			remind := dueAt.Add(-*explicitReminder.beforeDue)
+			remindAt = &remind
+		case explicitReminder.previousDayClock.found && dueAt != nil:
+			remindDay := dueAt.AddDate(0, 0, -1)
+			remind := time.Date(remindDay.Year(), remindDay.Month(), remindDay.Day(), explicitReminder.previousDayClock.hour, explicitReminder.previousDayClock.minute, 0, 0, location)
+			remindAt = &remind
+		default:
+			warnings = append(warnings, "reminder expression requires due_at")
+		}
 	}
 
 	title := cleanTitle(rawForTask)
@@ -156,12 +178,21 @@ func reminderBeforeDue(due time.Time, now time.Time) time.Time {
 	return remind
 }
 
-func parseExplicitReminder(lower string, now time.Time, location *time.Location) (*time.Time, []string) {
-	index := strings.Index(lower, "напомни")
+func parseExplicitReminder(raw string, now time.Time, location *time.Location) (*explicitReminderSpec, []string) {
+	lower := strings.ToLower(raw)
+	index := explicitReminderIndex(lower)
 	if index < 0 {
 		return nil, nil
 	}
 	clause := lower[index:]
+
+	if offset, ok := parseReminderOffset(clause); ok {
+		return &explicitReminderSpec{beforeDue: &offset}, nil
+	}
+	if clock, ok := parsePreviousDayReminder(clause); ok {
+		return &explicitReminderSpec{previousDayClock: clock}, nil
+	}
+
 	clock, clockWarnings := parseClock(clause)
 	warnings := append([]string{}, clockWarnings...)
 	if !clock.found {
@@ -171,26 +202,113 @@ func parseExplicitReminder(lower string, now time.Time, location *time.Location)
 	warnings = append(warnings, dateWarnings...)
 	if date.found {
 		remind := time.Date(date.value.Year(), date.value.Month(), date.value.Day(), clock.hour, clock.minute, 0, 0, location)
-		return &remind, warnings
+		return &explicitReminderSpec{at: &remind}, warnings
 	}
 	remind := time.Date(now.Year(), now.Month(), now.Day(), clock.hour, clock.minute, 0, 0, location)
 	if !remind.After(now) {
 		remind = remind.AddDate(0, 0, 1)
 	}
-	return &remind, warnings
+	return &explicitReminderSpec{at: &remind}, warnings
+}
+
+func parseReminderOffset(lower string) (time.Duration, bool) {
+	re := regexp.MustCompile(`(?i)(^|[\s,])(заранее\s+)?за\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`)
+	match := re.FindStringSubmatch(lower)
+	if len(match) == 0 {
+		return 0, false
+	}
+
+	n := 1
+	if match[3] != "" {
+		if match[3] == "пару" {
+			n = 2
+		} else if parsed, err := strconv.Atoi(match[3]); err == nil {
+			n = parsed
+		}
+	}
+
+	unit := match[4]
+	switch {
+	case strings.HasPrefix(unit, "минут"):
+		return time.Duration(n) * time.Minute, true
+	case strings.HasPrefix(unit, "час"):
+		return time.Duration(n) * time.Hour, true
+	case strings.HasPrefix(unit, "д"):
+		return time.Duration(n) * 24 * time.Hour, true
+	case strings.HasPrefix(unit, "недел"):
+		return time.Duration(n) * 7 * 24 * time.Hour, true
+	default:
+		return 0, false
+	}
+}
+
+func parsePreviousDayReminder(lower string) (parsedClock, bool) {
+	if !containsToken(lower, "накануне") {
+		return parsedClock{}, false
+	}
+	clock, _ := parseClock(lower)
+	if clock.found {
+		return clock, true
+	}
+	return parsedClock{hour: 10, minute: 0, found: true}, true
 }
 
 func stripExplicitReminder(raw string) string {
 	lower := strings.ToLower(raw)
-	index := strings.Index(lower, "напомни")
+	index := explicitReminderIndex(lower)
 	if index < 0 {
 		return raw
 	}
 	return strings.Trim(raw[:index], " \t\r\n,")
 }
 
+func explicitReminderIndex(lower string) int {
+	match := regexp.MustCompile(`(?i)(^|[\s,])(напомни|напомнить)(\s|$)`).FindStringIndex(lower)
+	if match == nil {
+		return -1
+	}
+	index := match[0]
+	prefix := strings.Trim(lower[:index], " \t\r\n,")
+	if prefix == "" || regexp.MustCompile(`(?i)^(пожалуйста|плиз|плз)$`).MatchString(prefix) {
+		return -1
+	}
+	return index
+}
+
+func normalizeTaskText(raw string) string {
+	text := strings.TrimSpace(raw)
+	patterns := []string{
+		`(?i)^\s*(пожалуйста|плиз|плз)[,\s]+`,
+		`(?i)^\s*(напомни|напомнить)\s+(мне\s+)?(пожалуйста\s+|плиз\s+|плз\s+|об\s+этом\s+)*`,
+		`(?i)^\s*(добавь|создай|поставь|запиши)\s+(мне\s+)?(задачу|дело|напоминание)?\s*`,
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
+			next := re.ReplaceAllString(text, "")
+			if next != text {
+				text = strings.TrimSpace(next)
+				changed = true
+			}
+		}
+	}
+	return text
+}
+
 func parseRelativeDuration(lower string, now time.Time) (*time.Time, []string) {
-	re := regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:(\d+)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`)
+	halfHour := regexp.MustCompile(`(?i)(^|[\s,])через\s+(полчаса|пол\s+часа)($|[\s,])`)
+	if matches := halfHour.FindAllString(lower, -1); len(matches) > 0 {
+		warnings := make([]string, 0)
+		if len(matches) > 1 {
+			warnings = append(warnings, "matched multiple date expressions")
+		}
+		due := now.Add(30 * time.Minute)
+		return &due, warnings
+	}
+
+	re := regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`)
 	matches := re.FindAllStringSubmatch(lower, -1)
 	warnings := make([]string, 0)
 	if len(matches) == 0 {
@@ -201,11 +319,15 @@ func parseRelativeDuration(lower string, now time.Time) (*time.Time, []string) {
 	}
 	n := 1
 	if matches[0][2] != "" {
-		parsed, err := strconv.Atoi(matches[0][2])
-		if err != nil {
-			return nil, append(warnings, "invalid relative duration")
+		if matches[0][2] == "пару" {
+			n = 2
+		} else {
+			parsed, err := strconv.Atoi(matches[0][2])
+			if err != nil {
+				return nil, append(warnings, "invalid relative duration")
+			}
+			n = parsed
 		}
-		n = parsed
 	}
 	if n == 0 {
 		warnings = append(warnings, "zero relative duration")
@@ -264,8 +386,9 @@ func parseDate(lower string, now time.Time) (parsedDate, []string) {
 
 func countDateExpressions(lower string) int {
 	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:\d+\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`),
-		regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])через\s+(полчаса|пол\s+часа)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])(в|во|к|ко|до|на)\s+(понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среду|среды|среде|четверг|четверга|четвергу|пятницу|пятницы|пятнице|субботу|субботы|субботе|воскресенье|воскресения|воскресение|воскресенья|воскресенью|воскресению)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])на\s+выходных($|[\s,])`),
 		regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
 		regexp.MustCompile(`\d{1,2}\.\d{1,2}(?:\.\d{4})?`),
@@ -296,21 +419,37 @@ func parseWeekday(lower string, now time.Time) (time.Time, bool) {
 		return nextWeekday(now, time.Saturday), true
 	}
 
-	re := regexp.MustCompile(`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`)
+	re := regexp.MustCompile(`(?i)(^|[\s,])(в|во|к|ко|до|на)\s+(понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среду|среды|среде|четверг|четверга|четвергу|пятницу|пятницы|пятнице|субботу|субботы|субботе|воскресенье|воскресения|воскресение|воскресенья|воскресенью|воскресению)($|[\s,])`)
 	match := re.FindStringSubmatch(lower)
 	if len(match) == 0 {
 		return time.Time{}, false
 	}
 
 	targets := map[string]time.Weekday{
-		"понедельник": time.Monday,
-		"вторник":     time.Tuesday,
-		"среду":       time.Wednesday,
-		"четверг":     time.Thursday,
-		"пятницу":     time.Friday,
-		"субботу":     time.Saturday,
-		"воскресенье": time.Sunday,
-		"воскресение": time.Sunday,
+		"понедельник":  time.Monday,
+		"понедельника": time.Monday,
+		"понедельнику": time.Monday,
+		"вторник":      time.Tuesday,
+		"вторника":     time.Tuesday,
+		"вторнику":     time.Tuesday,
+		"среду":        time.Wednesday,
+		"среды":        time.Wednesday,
+		"среде":        time.Wednesday,
+		"четверг":      time.Thursday,
+		"четверга":     time.Thursday,
+		"четвергу":     time.Thursday,
+		"пятницу":      time.Friday,
+		"пятницы":      time.Friday,
+		"пятнице":      time.Friday,
+		"субботу":      time.Saturday,
+		"субботы":      time.Saturday,
+		"субботе":      time.Saturday,
+		"воскресенье":  time.Sunday,
+		"воскресения":  time.Sunday,
+		"воскресение":  time.Sunday,
+		"воскресенья":  time.Sunday,
+		"воскресенью":  time.Sunday,
+		"воскресению":  time.Sunday,
 	}
 	target, ok := targets[match[3]]
 	if !ok {
@@ -376,11 +515,21 @@ func parseClock(lower string) (parsedClock, []string) {
 	warnings := make([]string, 0)
 	matches := make([]parsedClock, 0)
 
-	preposition := regexp.MustCompile(`(?i)(^|[\s,])(в|к|до)\s+(\d{1,2})(?::(\d{2}))?($|[\s,])`)
+	preposition := regexp.MustCompile(`(?i)(^|[\s,])(в|к|до)\s+(\d{1,2})(?::(\d{2}))?(?:\s+(утра|дня|вечера|ночи))?($|[\s,])`)
 	for _, match := range preposition.FindAllStringSubmatch(lower, -1) {
-		clock, ok := clockFromParts(match[3], match[4])
+		clock, ok := clockFromPartsWithDaypart(match[3], match[4], match[5])
 		if ok {
 			matches = append(matches, clock)
+		}
+	}
+
+	if len(matches) == 0 {
+		bare := regexp.MustCompile(`(?i)(^|[\s,])(\d{1,2})(?::(\d{2}))?\s+(утра|вечера|ночи)($|[\s,])`)
+		for _, match := range bare.FindAllStringSubmatch(lower, -1) {
+			clock, ok := clockFromPartsWithDaypart(match[2], match[3], match[4])
+			if ok {
+				matches = append(matches, clock)
+			}
 		}
 	}
 
@@ -394,20 +543,27 @@ func parseClock(lower string) (parsedClock, []string) {
 		}
 	}
 
-	partOfDay := []struct {
-		word   string
-		hour   int
-		minute int
-	}{
-		{word: "утром", hour: 10},
-		{word: "днём", hour: 12},
-		{word: "днем", hour: 12},
-		{word: "вечером", hour: 20},
-		{word: "ночью", hour: 22},
-	}
-	for _, item := range partOfDay {
-		if containsToken(lower, item.word) {
-			matches = append(matches, parsedClock{hour: item.hour, minute: item.minute, found: true})
+	if len(matches) == 0 {
+		partOfDay := []struct {
+			word   string
+			hour   int
+			minute int
+		}{
+			{word: "утром", hour: 10},
+			{word: "утра", hour: 10},
+			{word: "днём", hour: 12},
+			{word: "днем", hour: 12},
+			{word: "обеду", hour: 12},
+			{word: "обеда", hour: 12},
+			{word: "вечером", hour: 20},
+			{word: "вечера", hour: 20},
+			{word: "ночью", hour: 22},
+			{word: "ночи", hour: 22},
+		}
+		for _, item := range partOfDay {
+			if containsToken(lower, item.word) {
+				matches = append(matches, parsedClock{hour: item.hour, minute: item.minute, found: true})
+			}
 		}
 	}
 
@@ -436,6 +592,27 @@ func clockFromParts(hourPart string, minutePart string) (parsedClock, bool) {
 		return parsedClock{}, false
 	}
 	return parsedClock{hour: hour, minute: minute, found: true}, true
+}
+
+func clockFromPartsWithDaypart(hourPart string, minutePart string, daypart string) (parsedClock, bool) {
+	clock, ok := clockFromParts(hourPart, minutePart)
+	if !ok {
+		return parsedClock{}, false
+	}
+	switch strings.ToLower(daypart) {
+	case "дня", "вечера":
+		if clock.hour >= 1 && clock.hour <= 11 {
+			clock.hour += 12
+		}
+	case "ночи":
+		if clock.hour == 12 {
+			clock.hour = 0
+		}
+	case "утра", "":
+	default:
+		return parsedClock{}, false
+	}
+	return clock, true
 }
 
 func detectPriority(lower string) domain.Priority {
@@ -472,11 +649,11 @@ func detectCategory(lower string) (*string, []string) {
 		name     string
 		keywords []string
 	}{
-		{name: "Работа", keywords: []string{"работ", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
+		{name: "Работа", keywords: []string{"работ", "отчет", "договор", "клиент", "релиз", "документ", "презентац", "статус", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
 		{name: "Учеба", keywords: []string{"учеба", "диплом", "экзамен", "институт"}},
-		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховка", "оплатить"}},
+		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховк", "оплатить"}},
 		{name: "Дача", keywords: []string{"огурцы", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить", "петуни"}},
-		{name: "Авто", keywords: []string{"машина", "lexus", "шины", "масло", "страховка", "бензин"}},
+		{name: "Авто", keywords: []string{"машин", "lexus", "шины", "масло", "страховк", "бензин"}},
 		{name: "Покупки", keywords: []string{"купить", "заказать", "маркет", "озон", "wildberries"}},
 		{name: "Здоровье", keywords: []string{"врач", "давление", "анализы", "таблетки", "аптека"}},
 	}
@@ -517,31 +694,40 @@ func detectRecurrence(lower string) (*domain.RecurrenceRule, parsedClock) {
 func cleanTitle(text string) string {
 	title := text
 	patterns := []string{
-		`(?i)(^|[\s,])через\s+(?:\d+\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`,
-		`(?i)(^|[\s,])(послезавтра|сегодня|завтра)($|[\s,])`,
-		`(?i)(^|[\s,])(в|во)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|воскресение)($|[\s,])`,
+		`(?i)^\s*(пожалуйста|плиз|плз|нужно|надо|необходимо)\s+`,
+		`(?i)^\s*(добавь|создай|поставь|запиши)\s+(мне\s+)?(задачу|дело|напоминание)?\s*`,
+		`(?i)(^|[\s,])через\s+(полчаса|пол\s+часа)($|[\s,])`,
+		`(?i)(^|[\s,])через\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`,
+		`(?i)(^|[\s,])((в|во|к|ко|до|на)\s+)?(послезавтра|сегодня|завтра)($|[\s,])`,
+		`(?i)(^|[\s,])(в|во|к|ко|до|на)\s+(понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среду|среды|среде|четверг|четверга|четвергу|пятницу|пятницы|пятнице|субботу|субботы|субботе|воскресенье|воскресения|воскресение|воскресенья|воскресенью|воскресению)($|[\s,])`,
 		`(?i)(^|[\s,])на\s+выходных($|[\s,])`,
 		`\d{4}-\d{2}-\d{2}`,
-		`(^|[\s,])\d{1,2}\.\d{1,2}(?:\.\d{4})?($|[\s,])`,
-		`(?i)(^|[\s,])\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)($|[\s,])`,
-		`(?i)(^|[\s,])(в|к|до)\s+\d{1,2}(?::\d{2})?($|[\s,])`,
+		`(?i)(^|[\s,])((в|во|к|ко|до|на)\s+)?\d{1,2}\.\d{1,2}(?:\.\d{4})?($|[\s,])`,
+		`(?i)(^|[\s,])((в|во|к|ко|до|на)\s+)?\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)($|[\s,])`,
+		`(?i)(^|[\s,])(в|к|до)\s+\d{1,2}(?::\d{2})?(?:\s+(утра|дня|вечера|ночи))?($|[\s,])`,
+		`(?i)(^|[\s,])\d{1,2}(?::\d{2})?\s+(утра|вечера|ночи)($|[\s,])`,
 		`(^|[\s,])\d{1,2}:\d{2}($|[\s,])`,
-		`(?i)(^|[\s,])(утром|утра|днём|днем|дня|вечером|вечера|ночью|ночи)($|[\s,])`,
+		`(?i)(^|[\s,])((в|во|к|ко|до|на)\s+)?(утром|утра|днём|днем|дня|вечером|вечера|ночью|ночи|обеду|обеда)($|[\s,])`,
 		`(?i)(^|[\s,])(каждый\s+день|ежедневно|каждое\s+утро|каждый\s+вечер)($|[\s,])`,
 		`(?i)(^|[\s,])(не\s+срочно)($|[\s,])`,
 		`(?i)(^|[\s,])(очень\s+срочно|сегодня\s+обязательно|срочно|обязательно|asap|горит|важно|желательно|на\s+неделе|когда-нибудь|потом|идея|someday)($|[\s,])`,
 	}
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		for {
+	changed := true
+	for changed {
+		changed = false
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
 			next := re.ReplaceAllString(title, " ")
-			if next == title {
-				break
+			if next != title {
+				title = next
+				changed = true
 			}
-			title = next
 		}
 	}
 	title = regexp.MustCompile(`\s+`).ReplaceAllString(title, " ")
+	title = strings.Trim(title, " \t\r\n,")
+	title = regexp.MustCompile(`(?i)\s+(в|во|к|ко|до|на)$`).ReplaceAllString(title, "")
+	title = regexp.MustCompile(`(?i)^(в|во|к|ко|до|на)\s+`).ReplaceAllString(title, "")
 	title = strings.Trim(title, " \t\r\n,")
 	return title
 }

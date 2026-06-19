@@ -118,7 +118,7 @@ func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
 	if created.Task.RecurrenceRule == nil || *created.Task.RecurrenceRule != domain.RecurrenceDaily {
 		t.Fatalf("recurrence = %v, want daily", created.Task.RecurrenceRule)
 	}
-	if created.Task.Title != "Нужно поливать петунии" {
+	if created.Task.Title != "поливать петунии" {
 		t.Fatalf("title = %q", created.Task.Title)
 	}
 	assertServiceTimePtr(t, "initial remind", created.Task.RemindAt, ptrServiceTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)))
