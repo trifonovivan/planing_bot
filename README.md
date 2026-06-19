@@ -131,6 +131,14 @@ DEPLOY_ENABLED=true
 
 Когда `DEPLOY_ENABLED=true`, push в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует исходники, обновляет `.env`, собирает образ на сервере и выполняет `docker compose up -d --build --remove-orphans`.
 
+Production compose дополнительно поднимает observability-контур:
+
+- `nginx` reverse proxy на `:80`
+- `prometheus` для сбора метрик приложения
+- `grafana` для дашбордов
+- `loki` для хранения логов
+- `promtail` для доставки Docker logs в Loki
+
 GitHub Secrets для деплоя:
 
 ```text
@@ -144,6 +152,8 @@ POSTGRES_PASSWORD=<postgres-password>
 DATABASE_URL=postgres://planner:<postgres-password>@postgres:5432/planner?sslmode=disable
 POSTGRES_USER=planner
 POSTGRES_DB=planner
+GRAFANA_ADMIN_PASSWORD=<grafana-admin-password>
+MONITORING_HTPASSWD=<htpasswd-line-for-nginx-basic-auth>
 ```
 
 Опциональные GitHub Variables:
@@ -153,19 +163,39 @@ DEFAULT_TIMEZONE=Europe/Moscow
 DIGEST_TIME=09:30
 METRICS_ENABLED=true
 METRICS_BIND=127.0.0.1:8080
+PUBLIC_HOST=<server-host-or-domain>
+HTTP_BIND=0.0.0.0:80
+GRAFANA_ADMIN_USER=admin
+PROMETHEUS_RETENTION=15d
+LOKI_RETENTION=168h
 ```
 
 Если нужно проверить production compose локально из корня репозитория:
 
 ```bash
-IMAGE=ghcr.io/trifonovivan/planing_bot:main \
 BOT_TOKEN=dummy \
 POSTGRES_PASSWORD=dummy \
 DATABASE_URL='postgres://planner:dummy@postgres:5432/planner?sslmode=disable' \
-BUILD_CONTEXT=.. \
-MIGRATIONS_DIR=../migrations \
-docker compose -f deploy/docker-compose.prod.yml config
+GRAFANA_ADMIN_PASSWORD=dummy \
+PUBLIC_HOST=127.0.0.1 \
+docker compose --project-directory . -f deploy/docker-compose.prod.yml config
 ```
+
+## Production endpoints
+
+После деплоя nginx публикует:
+
+```text
+GET /health
+GET /grafana/
+GET /logs
+GET /metrics
+GET /prometheus/
+```
+
+`/grafana/` открывает Grafana. `/logs` ведет в Grafana Explore с Loki datasource.
+
+`/metrics` и `/prometheus/` закрыты nginx basic auth через `MONITORING_HTPASSWD`, чтобы сырые метрики и Prometheus UI не были публичными.
 
 ## Метрики
 

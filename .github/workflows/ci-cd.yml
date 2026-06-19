@@ -116,6 +116,13 @@ jobs:
       DIGEST_TIME: ${{ vars.DIGEST_TIME || '09:30' }}
       METRICS_ENABLED: ${{ vars.METRICS_ENABLED || 'true' }}
       METRICS_BIND: ${{ vars.METRICS_BIND || '127.0.0.1:8080' }}
+      PUBLIC_HOST: ${{ vars.PUBLIC_HOST || secrets.DEPLOY_HOST }}
+      HTTP_BIND: ${{ vars.HTTP_BIND || '0.0.0.0:80' }}
+      GRAFANA_ADMIN_USER: ${{ vars.GRAFANA_ADMIN_USER || 'admin' }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+      MONITORING_HTPASSWD: ${{ secrets.MONITORING_HTPASSWD }}
+      PROMETHEUS_RETENTION: ${{ vars.PROMETHEUS_RETENTION || '15d' }}
+      LOKI_RETENTION: ${{ vars.LOKI_RETENTION || '168h' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,6 +135,8 @@ jobs:
           test -n "$BOT_TOKEN"
           test -n "$POSTGRES_PASSWORD"
           test -n "$DATABASE_URL"
+          test -n "$GRAFANA_ADMIN_PASSWORD"
+          test -n "$MONITORING_HTPASSWD"
 
       - name: Prepare SSH
         run: |
@@ -149,13 +158,23 @@ jobs:
           DIGEST_TIME=$DIGEST_TIME
           METRICS_ENABLED=$METRICS_ENABLED
           METRICS_BIND=$METRICS_BIND
+          PUBLIC_HOST=$PUBLIC_HOST
+          HTTP_BIND=$HTTP_BIND
+          GRAFANA_ADMIN_USER=$GRAFANA_ADMIN_USER
+          GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
+          PROMETHEUS_RETENTION=$PROMETHEUS_RETENTION
+          LOKI_RETENTION=$LOKI_RETENTION
           EOF
+
+          printf '%s\n' "$MONITORING_HTPASSWD" > .monitoring.htpasswd
 
       - name: Pack release
         run: |
           tar \
             --exclude='.git' \
             --exclude='.env' \
+            --exclude='.deploy.env' \
+            --exclude='.monitoring.htpasswd' \
             --exclude='.idea' \
             --exclude='tmp' \
             -czf "$RUNNER_TEMP/release.tar.gz" .
@@ -165,6 +184,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$RUNNER_TEMP/release.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/release.tar.gz"
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .deploy.env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .monitoring.htpasswd "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.htpasswd"
 
       - name: Deploy
         run: |

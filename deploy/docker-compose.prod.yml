@@ -1,5 +1,13 @@
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
 services:
   postgres:
+    <<: *default-logging
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-planner}
@@ -15,6 +23,7 @@ services:
     restart: unless-stopped
 
   migrate:
+    <<: *default-logging
     image: postgres:16-alpine
     depends_on:
       postgres:
@@ -28,9 +37,14 @@ services:
     command:
       - sh
       - -c
-      - psql -h postgres -v ON_ERROR_STOP=1 -f /migrations/001_init.up.sql
+      - |
+        for f in /migrations/*.up.sql; do
+          echo "applying $$f"
+          psql -h postgres -v ON_ERROR_STOP=1 -f "$$f"
+        done
 
   app:
+    <<: *default-logging
     build:
       context: ${BUILD_CONTEXT:-.}
       dockerfile: Dockerfile
@@ -52,5 +66,93 @@ services:
       - "${METRICS_BIND:-127.0.0.1:8080}:8080"
     restart: unless-stopped
 
+  prometheus:
+    <<: *default-logging
+    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.external-url=http://${PUBLIC_HOST:-176.120.21.95}/prometheus/
+      - --web.route-prefix=/
+    depends_on:
+      app:
+        condition: service_started
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  loki:
+    <<: *default-logging
+    image: grafana/loki:${LOKI_VERSION:-latest}
+    environment:
+      LOKI_RETENTION: ${LOKI_RETENTION:-168h}
+    command:
+      - -config.file=/etc/loki/loki.yml
+      - -config.expand-env=true
+    volumes:
+      - ./deploy/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+
+  promtail:
+    <<: *default-logging
+    image: grafana/promtail:${PROMTAIL_VERSION:-latest}
+    command:
+      - -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      loki:
+        condition: service_started
+    volumes:
+      - ./deploy/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    restart: unless-stopped
+
+  grafana:
+    <<: *default-logging
+    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_DOMAIN: ${PUBLIC_HOST:-176.120.21.95}
+      GF_SERVER_ROOT_URL: http://${PUBLIC_HOST:-176.120.21.95}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+
+  nginx:
+    <<: *default-logging
+    image: nginx:${NGINX_VERSION:-stable-alpine}
+    depends_on:
+      app:
+        condition: service_started
+      grafana:
+        condition: service_started
+      prometheus:
+        condition: service_started
+    ports:
+      - "${HTTP_BIND:-0.0.0.0:80}:80"
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./.htpasswd:/etc/nginx/.htpasswd:ro
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  prometheus-data:
+  loki-data:
+  promtail-positions:
+  grafana-data:

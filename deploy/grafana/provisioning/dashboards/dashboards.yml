@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Planner Bot
+    orgId: 1
+    folder: Planner Bot
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
