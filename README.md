@@ -48,6 +48,7 @@ DEFAULT_TIMEZONE=Europe/Moscow
 DIGEST_TIME=09:30
 METRICS_ENABLED=true
 METRICS_ADDR=:8080
+ML_PARSER_URL=http://parser-model:8090/parse
 ```
 
 `BOT_TOKEN` берется у BotFather. Реальные секреты хранятся только в локальном `.env` или в файлах, переданных через `BOT_TOKEN_FILE` / `DATABASE_URL_FILE`.
@@ -103,6 +104,42 @@ go test ./...
 
 Есть unit-тесты parser'а на обязательные сценарии и service-layer тест без Telegram API/Postgres.
 
+## ML parser service
+
+Python-модель разбора сообщений живет отдельно от Go-бота в `model-service/`.
+Сервис поднимается как отдельный контейнер `parser-model` и слушает `8090`.
+Go-бот использует модель, когда задан `ML_PARSER_URL`; в Docker Compose это включено по умолчанию через `http://parser-model:8090/parse`.
+Если ML-сервис недоступен или возвращает ошибку, бот автоматически откатывается на встроенный rule-based parser.
+
+Обучение локально:
+
+```bash
+cd model-service
+python3 -m venv .venv
+. .venv/bin/activate
+pip install ".[dev]"
+python scripts/generate_planning_dataset.py --out . --seed 424242 --train 10000 --valid 1200
+PYTHONPATH=src python -m message_parser.train --train-file datasets/planning_ru/train.jsonl --valid-file datasets/planning_ru/valid.jsonl --model-out artifacts/planning_ru_model.joblib
+PYTHONPATH=src python -m message_parser.evaluate --model artifacts/planning_ru_model.joblib --valid-file datasets/planning_ru/valid.jsonl
+```
+
+Локальный API:
+
+```bash
+cd model-service
+MODEL_PATH=artifacts/planning_ru_model.joblib uvicorn message_parser.api:app --host 0.0.0.0 --port 8090
+```
+
+Для production compose при запуске из корня репозитория укажи пути:
+
+```bash
+BUILD_CONTEXT=.. \
+MIGRATIONS_DIR=../migrations \
+PARSER_MODEL_CONTEXT=../model-service \
+PARSER_MODEL_ARTIFACTS_DIR=../model-service/artifacts \
+docker compose -f deploy/docker-compose.prod.yml config
+```
+
 ## CI/CD
 
 GitHub Actions workflow лежит в `.github/workflows/ci-cd.yml`.
@@ -130,6 +167,7 @@ DEPLOY_ENABLED=true
 ```
 
 Когда `DEPLOY_ENABLED=true`, push в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует исходники, обновляет `.env`, собирает образ на сервере и выполняет `docker compose up -d --build --force-recreate --remove-orphans`.
+Перед упаковкой релиза workflow генерирует обучающий датасет для `model-service`, обучает `artifacts/planning_ru_model.joblib`, прогоняет evaluation и кладет готовый артефакт модели в release archive. Сам `.joblib` в git не хранится.
 
 Production compose дополнительно поднимает observability-контур:
 
@@ -165,6 +203,8 @@ DEFAULT_TIMEZONE=Europe/Moscow
 DIGEST_TIME=09:30
 METRICS_ENABLED=true
 METRICS_BIND=127.0.0.1:8080
+ML_PARSER_URL=http://parser-model:8090/parse
+PARSER_MODEL_BIND=127.0.0.1:8090
 PUBLIC_HOST=<server-host-or-domain>
 HTTP_BIND=0.0.0.0:80
 GRAFANA_ADMIN_USER=admin

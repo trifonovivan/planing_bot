@@ -42,6 +42,33 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: model-service/pyproject.toml
+
+      - name: Install model-service dependencies
+        working-directory: model-service
+        run: pip install ".[dev]"
+
+      - name: Test model-service
+        working-directory: model-service
+        run: PYTHONPATH=src pytest tests
+
+      - name: Train and evaluate parser model
+        working-directory: model-service
+        run: |
+          python scripts/generate_planning_dataset.py --out . --seed 424242 --train 10000 --valid 1200
+          PYTHONPATH=src python -m message_parser.train \
+            --train-file datasets/planning_ru/train.jsonl \
+            --valid-file datasets/planning_ru/valid.jsonl \
+            --model-out artifacts/planning_ru_model.joblib
+          PYTHONPATH=src python -m message_parser.evaluate \
+            --model artifacts/planning_ru_model.joblib \
+            --valid-file datasets/planning_ru/valid.jsonl
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -51,6 +78,15 @@ jobs:
           context: .
           push: false
           tags: planner-bot:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build parser model Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./model-service
+          push: false
+          tags: planner-parser-model:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -116,6 +152,8 @@ jobs:
       DIGEST_TIME: ${{ vars.DIGEST_TIME || '09:30' }}
       METRICS_ENABLED: ${{ vars.METRICS_ENABLED || 'true' }}
       METRICS_BIND: ${{ vars.METRICS_BIND || '127.0.0.1:8080' }}
+      ML_PARSER_URL: ${{ vars.ML_PARSER_URL || 'http://parser-model:8090/parse' }}
+      PARSER_MODEL_BIND: ${{ vars.PARSER_MODEL_BIND || '127.0.0.1:8090' }}
       PUBLIC_HOST: ${{ vars.PUBLIC_HOST || secrets.DEPLOY_HOST }}
       HTTP_BIND: ${{ vars.HTTP_BIND || '0.0.0.0:80' }}
       GRAFANA_ADMIN_USER: ${{ vars.GRAFANA_ADMIN_USER || 'admin' }}
@@ -128,6 +166,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: model-service/pyproject.toml
+
+      - name: Train parser model artifact
+        working-directory: model-service
+        run: |
+          pip install .
+          python scripts/generate_planning_dataset.py --out . --seed 424242 --train 10000 --valid 1200
+          PYTHONPATH=src python -m message_parser.train \
+            --train-file datasets/planning_ru/train.jsonl \
+            --valid-file datasets/planning_ru/valid.jsonl \
+            --model-out artifacts/planning_ru_model.joblib
+          PYTHONPATH=src python -m message_parser.evaluate \
+            --model artifacts/planning_ru_model.joblib \
+            --valid-file datasets/planning_ru/valid.jsonl
 
       - name: Validate deploy configuration
         run: |
@@ -160,6 +218,8 @@ jobs:
           DIGEST_TIME=$DIGEST_TIME
           METRICS_ENABLED=$METRICS_ENABLED
           METRICS_BIND=$METRICS_BIND
+          ML_PARSER_URL=$ML_PARSER_URL
+          PARSER_MODEL_BIND=$PARSER_MODEL_BIND
           PUBLIC_HOST=$PUBLIC_HOST
           HTTP_BIND=$HTTP_BIND
           GRAFANA_ADMIN_USER=$GRAFANA_ADMIN_USER
@@ -174,6 +234,7 @@ jobs:
 
       - name: Pack release
         run: |
+          test -f model-service/artifacts/planning_ru_model.joblib
           tar \
             --exclude='.git' \
             --exclude='.env' \
@@ -181,6 +242,10 @@ jobs:
             --exclude='.monitoring.htpasswd' \
             --exclude='.idea' \
             --exclude='tmp' \
+            --exclude='model-service/.venv' \
+            --exclude='model-service/.pytest_cache' \
+            --exclude='model-service/datasets/planning_ru/train.jsonl' \
+            --exclude='model-service/datasets/planning_ru/valid.jsonl' \
             -czf "$RUNNER_TEMP/release.tar.gz" .
 
       - name: Upload release

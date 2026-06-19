@@ -17,6 +17,7 @@ type Config struct {
 	DigestTime      string
 	MetricsEnabled  bool
 	MetricsAddr     string
+	MLParserURL     string
 }
 
 type Secret struct {
@@ -54,6 +55,7 @@ func Load() (Config, error) {
 		DigestTime:      getEnv("DIGEST_TIME", "09:30"),
 		MetricsEnabled:  getBoolEnv("METRICS_ENABLED", true),
 		MetricsAddr:     getEnv("METRICS_ADDR", ":8080"),
+		MLParserURL:     strings.TrimSpace(getEnv("ML_PARSER_URL", "")),
 	}, nil
 }
 

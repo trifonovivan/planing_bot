@@ -53,12 +53,19 @@ type Service struct {
 	store           Store
 	defaultTimezone string
 	defaultLocation *time.Location
+	parser          textParser
 	metrics         *metrics.Registry
 	logger          *logging.Logger
 	now             func() time.Time
 }
 
 type Option func(*Service)
+
+type textParser interface {
+	Parse(ctx context.Context, text string, now time.Time, location *time.Location) (parser.ParseResult, error)
+}
+
+type ruleTextParser struct{}
 
 type CreateTaskResult struct {
 	Task       domain.Task
@@ -106,6 +113,14 @@ func WithLogger(logger *logging.Logger) Option {
 	}
 }
 
+func WithParser(textParser textParser) Option {
+	return func(s *Service) {
+		if textParser != nil {
+			s.parser = textParser
+		}
+	}
+}
+
 func New(store Store, defaultTimezone string, defaultLocation *time.Location, opts ...Option) *Service {
 	if defaultTimezone == "" {
 		defaultTimezone = "Europe/Moscow"
@@ -117,6 +132,7 @@ func New(store Store, defaultTimezone string, defaultLocation *time.Location, op
 		store:           store,
 		defaultTimezone: defaultTimezone,
 		defaultLocation: defaultLocation,
+		parser:          ruleTextParser{},
 		now:             time.Now,
 	}
 	for _, opt := range opts {
@@ -242,7 +258,7 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 
 	location := s.locationForUser(user)
 	parserStart := time.Now()
-	parsed, err := parser.Parse(taskText, s.now().In(location), location)
+	parsed, err := s.parser.Parse(ctx, taskText, s.now().In(location), location)
 	s.observeParser(parserStart, err)
 	if err != nil {
 		s.logError("parser_failed", err, logging.Fields{
@@ -301,6 +317,10 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 		assigneeUser = *recipient
 	}
 	return &CreateTaskResult{Task: task, Parse: parsed, Assignee: assigneeUser, Resolution: resolution}, nil
+}
+
+func (ruleTextParser) Parse(_ context.Context, text string, now time.Time, location *time.Location) (parser.ParseResult, error) {
+	return parser.Parse(text, now, location)
 }
 
 func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, taskID int64) (*domain.Task, error) {
