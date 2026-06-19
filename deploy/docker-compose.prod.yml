@@ -31,7 +31,10 @@ services:
       - psql -h postgres -v ON_ERROR_STOP=1 -f /migrations/001_init.up.sql
 
   app:
-    image: ${IMAGE:?set IMAGE}
+    build:
+      context: ${BUILD_CONTEXT:-.}
+      dockerfile: Dockerfile
+    image: ${IMAGE:-planner-bot:local}
     depends_on:
       migrate:
         condition: service_completed_successfully

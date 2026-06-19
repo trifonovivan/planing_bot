@@ -124,7 +124,7 @@ CD включается отдельно через repository variable:
 DEPLOY_ENABLED=true
 ```
 
-Когда `DEPLOY_ENABLED=true`, push в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует `deploy/docker-compose.prod.yml` как `docker-compose.yml`, копирует `migrations/*.sql`, обновляет `.env`, подтягивает свежий образ и выполняет `docker compose up -d --remove-orphans`.
+Когда `DEPLOY_ENABLED=true`, push в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует исходники, обновляет `.env`, собирает образ на сервере и выполняет `docker compose up -d --build --remove-orphans`.
 
 GitHub Secrets для деплоя:
 
@@ -134,8 +134,6 @@ DEPLOY_USER=<ssh-user>
 DEPLOY_SSH_KEY=<private-ssh-key>
 DEPLOY_PORT=22
 DEPLOY_PATH=/opt/planner-bot
-GHCR_TOKEN=<pat-with-read-packages>
-GHCR_USER=<github-username>
 BOT_TOKEN=<telegram-bot-token>
 POSTGRES_PASSWORD=<postgres-password>
 DATABASE_URL=postgres://planner:<postgres-password>@postgres:5432/planner?sslmode=disable
@@ -159,6 +157,7 @@ IMAGE=ghcr.io/trifonovivan/planing_bot:main \
 BOT_TOKEN=dummy \
 POSTGRES_PASSWORD=dummy \
 DATABASE_URL='postgres://planner:dummy@postgres:5432/planner?sslmode=disable' \
+BUILD_CONTEXT=.. \
 MIGRATIONS_DIR=../migrations \
 docker compose -f deploy/docker-compose.prod.yml config
 ```
