@@ -123,6 +123,8 @@ jobs:
       MONITORING_HTPASSWD: ${{ secrets.MONITORING_HTPASSWD }}
       PROMETHEUS_RETENTION: ${{ vars.PROMETHEUS_RETENTION || '15d' }}
       LOKI_RETENTION: ${{ vars.LOKI_RETENTION || '168h' }}
+      NODE_EXPORTER_VERSION: ${{ vars.NODE_EXPORTER_VERSION || 'latest' }}
+      CADVISOR_VERSION: ${{ vars.CADVISOR_VERSION || 'latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -164,6 +166,8 @@ jobs:
           GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
           PROMETHEUS_RETENTION=$PROMETHEUS_RETENTION
           LOKI_RETENTION=$LOKI_RETENTION
+          NODE_EXPORTER_VERSION=$NODE_EXPORTER_VERSION
+          CADVISOR_VERSION=$CADVISOR_VERSION
           EOF
 
           printf '%s\n' "$MONITORING_HTPASSWD" > .monitoring.htpasswd
