@@ -52,6 +52,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      parser-model:
+        condition: service_healthy
     environment:
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
       BOT_TOKEN_FILE: ${BOT_TOKEN_FILE:-}
@@ -62,8 +64,29 @@ services:
       DIGEST_TIME: ${DIGEST_TIME:-09:30}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_ADDR: ${METRICS_ADDR:-:8080}
+      ML_PARSER_URL: ${ML_PARSER_URL:-http://parser-model:8090/parse}
     ports:
       - "${METRICS_BIND:-127.0.0.1:8080}:8080"
+    restart: unless-stopped
+
+  parser-model:
+    <<: *default-logging
+    build:
+      context: ${PARSER_MODEL_CONTEXT:-./model-service}
+      dockerfile: Dockerfile
+    image: ${PARSER_MODEL_IMAGE:-planner-parser-model:local}
+    environment:
+      MODEL_PATH: ${PARSER_MODEL_PATH:-/app/artifacts/planning_ru_model.joblib}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Europe/Moscow}
+    volumes:
+      - ${PARSER_MODEL_ARTIFACTS_DIR:-./model-service/artifacts}:/app/artifacts:ro
+    ports:
+      - "${PARSER_MODEL_BIND:-127.0.0.1:8090}:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   node-exporter:

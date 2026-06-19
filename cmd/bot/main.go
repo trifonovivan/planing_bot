@@ -14,6 +14,7 @@ import (
 	"planing_bot/internal/config"
 	"planing_bot/internal/logging"
 	"planing_bot/internal/metrics"
+	"planing_bot/internal/mlparser"
 	"planing_bot/internal/scheduler"
 	"planing_bot/internal/service"
 	"planing_bot/internal/storage/postgres"
@@ -67,7 +68,14 @@ func main() {
 		go metricsServer.Run(ctx)
 	}
 
-	planner := service.New(store, cfg.DefaultTimezone, location, service.WithMetrics(registry), service.WithLogger(logger))
+	serviceOptions := []service.Option{
+		service.WithMetrics(registry),
+		service.WithLogger(logger),
+	}
+	if cfg.MLParserURL != "" {
+		serviceOptions = append(serviceOptions, service.WithParser(mlparser.New(cfg.MLParserURL)))
+	}
+	planner := service.New(store, cfg.DefaultTimezone, location, serviceOptions...)
 	bot := telegram.New(cfg.BotToken.Value(), planner, telegram.WithBotUsername(cfg.BotUsername), telegram.WithMetrics(registry), telegram.WithLogger(logger))
 	worker := scheduler.New(planner, bot, digestHour, digestMinute, scheduler.WithMetrics(registry), scheduler.WithLogger(logger))
 
@@ -77,6 +85,7 @@ func main() {
 		"env":             cfg.AppEnv,
 		"metrics_enabled": cfg.MetricsEnabled,
 		"metrics_addr":    cfg.MetricsAddr,
+		"ml_parser":       cfg.MLParserURL != "",
 	})
 	if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("planner_bot_failed", err, nil)

@@ -33,6 +33,7 @@ func TestLoadReadsSecretsFromFiles(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("DATABASE_URL_FILE", databaseURLFile)
 	t.Setenv("BOT_USERNAME", "@planner_bot")
+	t.Setenv("ML_PARSER_URL", " http://parser-model:8090/parse ")
 
 	cfg, err := Load()
 	if err != nil {
@@ -46,6 +47,9 @@ func TestLoadReadsSecretsFromFiles(t *testing.T) {
 	}
 	if got := cfg.BotUsername; got != "planner_bot" {
 		t.Fatalf("BotUsername = %q", got)
+	}
+	if got := cfg.MLParserURL; got != "http://parser-model:8090/parse" {
+		t.Fatalf("MLParserURL = %q", got)
 	}
 	if got := cfg.BotToken.String(); got != "<redacted>" {
 		t.Fatalf("BotToken.String() = %q", got)

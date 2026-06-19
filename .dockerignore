@@ -4,3 +4,8 @@
 tmp
 *.test
 coverage.*
+model-service/.venv
+model-service/.pytest_cache
+model-service/**/__pycache__
+model-service/artifacts
+model-service/datasets/**/*.jsonl
