@@ -158,12 +158,12 @@ jobs:
             --exclude='.env' \
             --exclude='.idea' \
             --exclude='tmp' \
-            -czf release.tar.gz .
+            -czf "$RUNNER_TEMP/release.tar.gz" .
 
       - name: Upload release
         run: |
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" release.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/release.tar.gz"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$RUNNER_TEMP/release.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/release.tar.gz"
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .deploy.env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env"
 
       - name: Deploy
