@@ -203,6 +203,9 @@ GET /prometheus/
 
 - `Planner Bot Overview`
 - `Infrastructure Overview`
+- `Product Tasks Overview`
+- `Product Delivery and Telegram`
+- `Product Quality and Latency`
 
 `/metrics` и `/prometheus/` закрыты nginx basic auth через `MONITORING_HTPASSWD`, чтобы сырые метрики и Prometheus UI не были публичными.
 
