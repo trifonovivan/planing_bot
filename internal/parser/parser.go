@@ -13,13 +13,14 @@ import (
 var ErrEmptyTitle = errors.New("empty task title")
 
 type ParseResult struct {
-	Title      string
-	DueAt      *time.Time
-	RemindAt   *time.Time
-	Priority   domain.Priority
-	Category   *string
-	Confidence float64
-	Warnings   []string
+	Title          string
+	DueAt          *time.Time
+	RemindAt       *time.Time
+	Priority       domain.Priority
+	Category       *string
+	RecurrenceRule *domain.RecurrenceRule
+	Confidence     float64
+	Warnings       []string
 }
 
 type parsedDate struct {
@@ -48,6 +49,7 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 	priority := detectPriority(lower)
 	category, categoryWarnings := detectCategory(lower)
 	warnings = append(warnings, categoryWarnings...)
+	recurrenceRule, recurrenceClock := detectRecurrence(lower)
 
 	exactDue, durationWarnings := parseRelativeDuration(lower, now)
 	warnings = append(warnings, durationWarnings...)
@@ -84,16 +86,23 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 		remind := reminderBeforeDue(due, now)
 		remindAt = &remind
 	}
+	if recurrenceRule != nil && dueAt == nil && remindAt == nil {
+		remind := nextDailyReminder(now, location, recurrenceClock)
+		due := time.Date(remind.Year(), remind.Month(), remind.Day(), 23, 59, 0, 0, location)
+		dueAt = &due
+		remindAt = &remind
+	}
 
 	title := cleanTitle(raw)
 	if title == "" {
 		return ParseResult{
-			Priority:   priority,
-			Category:   category,
-			DueAt:      dueAt,
-			RemindAt:   remindAt,
-			Confidence: 0.2,
-			Warnings:   warnings,
+			Priority:       priority,
+			Category:       category,
+			RecurrenceRule: recurrenceRule,
+			DueAt:          dueAt,
+			RemindAt:       remindAt,
+			Confidence:     0.2,
+			Warnings:       warnings,
 		}, ErrEmptyTitle
 	}
 
@@ -101,19 +110,36 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 	if dueAt != nil || category != nil || priority != domain.PriorityP3 {
 		confidence = 0.85
 	}
+	if recurrenceRule != nil {
+		confidence = 0.9
+	}
 	if len(warnings) > 0 {
 		confidence -= 0.1
 	}
 
 	return ParseResult{
-		Title:      title,
-		DueAt:      dueAt,
-		RemindAt:   remindAt,
-		Priority:   priority,
-		Category:   category,
-		Confidence: confidence,
-		Warnings:   warnings,
+		Title:          title,
+		DueAt:          dueAt,
+		RemindAt:       remindAt,
+		Priority:       priority,
+		Category:       category,
+		RecurrenceRule: recurrenceRule,
+		Confidence:     confidence,
+		Warnings:       warnings,
 	}, nil
+}
+
+func nextDailyReminder(now time.Time, location *time.Location, clock parsedClock) time.Time {
+	hour, minute := 9, 0
+	if clock.found {
+		hour = clock.hour
+		minute = clock.minute
+	}
+	remind := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, location)
+	if !remind.After(now) {
+		remind = remind.AddDate(0, 0, 1)
+	}
+	return remind
 }
 
 func reminderBeforeDue(due time.Time, now time.Time) time.Time {
@@ -405,7 +431,7 @@ func detectCategory(lower string) (*string, []string) {
 		{name: "Работа", keywords: []string{"работа", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
 		{name: "Учеба", keywords: []string{"учеба", "диплом", "экзамен", "институт"}},
 		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховка", "оплатить"}},
-		{name: "Дача", keywords: []string{"огурцы", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить"}},
+		{name: "Дача", keywords: []string{"огурцы", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить", "петуни"}},
 		{name: "Авто", keywords: []string{"машина", "lexus", "шины", "масло", "страховка", "бензин"}},
 		{name: "Покупки", keywords: []string{"купить", "заказать", "маркет", "озон", "wildberries"}},
 		{name: "Здоровье", keywords: []string{"врач", "давление", "анализы", "таблетки", "аптека"}},
@@ -430,6 +456,20 @@ func detectCategory(lower string) (*string, []string) {
 	return &matched[0], warnings
 }
 
+func detectRecurrence(lower string) (*domain.RecurrenceRule, parsedClock) {
+	rule := domain.RecurrenceDaily
+	switch {
+	case regexp.MustCompile(`(?i)(^|[\s,])(каждый\s+день|ежедневно)($|[\s,])`).MatchString(lower):
+		return &rule, parsedClock{hour: 9, minute: 0, found: true}
+	case regexp.MustCompile(`(?i)(^|[\s,])каждое\s+утро($|[\s,])`).MatchString(lower):
+		return &rule, parsedClock{hour: 9, minute: 0, found: true}
+	case regexp.MustCompile(`(?i)(^|[\s,])каждый\s+вечер($|[\s,])`).MatchString(lower):
+		return &rule, parsedClock{hour: 19, minute: 0, found: true}
+	default:
+		return nil, parsedClock{}
+	}
+}
+
 func cleanTitle(text string) string {
 	title := text
 	patterns := []string{
@@ -443,6 +483,7 @@ func cleanTitle(text string) string {
 		`(?i)(^|[\s,])(в|к|до)\s+\d{1,2}(?::\d{2})?($|[\s,])`,
 		`(^|[\s,])\d{1,2}:\d{2}($|[\s,])`,
 		`(?i)(^|[\s,])(утром|днём|днем|вечером|ночью)($|[\s,])`,
+		`(?i)(^|[\s,])(каждый\s+день|ежедневно|каждое\s+утро|каждый\s+вечер)($|[\s,])`,
 		`(?i)(^|[\s,])(не\s+срочно)($|[\s,])`,
 		`(?i)(^|[\s,])(очень\s+срочно|сегодня\s+обязательно|срочно|обязательно|asap|горит|важно|желательно|на\s+неделе|когда-нибудь|потом|идея|someday)($|[\s,])`,
 	}

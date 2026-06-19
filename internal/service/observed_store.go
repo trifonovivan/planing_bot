@@ -73,6 +73,13 @@ func (s *ObservedStore) UpdateTaskStatus(ctx context.Context, taskID int64, user
 	return result, err
 }
 
+func (s *ObservedStore) UpdateTaskSchedule(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
+	start := time.Now()
+	result, err := s.next.UpdateTaskSchedule(ctx, taskID, userID, dueAt, remindAt, at)
+	s.observe("update_task_schedule", start, err)
+	return result, err
+}
+
 func (s *ObservedStore) PostponeTask(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
 	start := time.Now()
 	result, err := s.next.PostponeTask(ctx, taskID, userID, dueAt, remindAt, at)
@@ -98,6 +105,13 @@ func (s *ObservedStore) MarkReminderSent(ctx context.Context, reminderID int64, 
 	start := time.Now()
 	err := s.next.MarkReminderSent(ctx, reminderID, sentAt)
 	s.observe("mark_reminder_sent", start, err)
+	return err
+}
+
+func (s *ObservedStore) MarkTaskRemindersSentBefore(ctx context.Context, taskID int64, before time.Time, sentAt time.Time) error {
+	start := time.Now()
+	err := s.next.MarkTaskRemindersSentBefore(ctx, taskID, before, sentAt)
+	s.observe("mark_task_reminders_sent_before", start, err)
 	return err
 }
 

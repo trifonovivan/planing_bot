@@ -30,6 +30,12 @@ const (
 	RoleGuest  Role = "guest"
 )
 
+type RecurrenceRule string
+
+const (
+	RecurrenceDaily RecurrenceRule = "daily"
+)
+
 type User struct {
 	ID         int64
 	TelegramID int64
@@ -59,6 +65,7 @@ type Task struct {
 	Status         Status
 	Priority       Priority
 	Category       *string
+	RecurrenceRule *RecurrenceRule
 	DueAt          *time.Time
 	RemindAt       *time.Time
 	PostponedCount int

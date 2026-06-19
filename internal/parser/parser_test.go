@@ -298,6 +298,7 @@ func TestCategoryDetection(t *testing.T) {
 		"подготовить диплом":     "Учеба",
 		"оплатить налог":         "Финансы",
 		"полить огурцы":          "Дача",
+		"поливать петунии":       "Дача",
 		"купить масло для lexus": "Авто",
 		"заказать корм":          "Покупки",
 		"купить таблетки":        "Покупки",
@@ -311,6 +312,33 @@ func TestCategoryDetection(t *testing.T) {
 			t.Fatalf("Parse(%q).Category = %v, want %q", text, got.Category, want)
 		}
 	}
+}
+
+func TestRecurrenceDetection(t *testing.T) {
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 19, 23, 23, 0, 0, loc)
+
+	got, err := Parse("Нужно поливать петунии каждый день", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if got.Title != "Нужно поливать петунии" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.RecurrenceRule == nil || *got.RecurrenceRule != domain.RecurrenceDaily {
+		t.Fatalf("recurrence = %v, want daily", got.RecurrenceRule)
+	}
+	assertTimePtr(t, "due", got.DueAt, ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)))
+	assertTimePtr(t, "remind", got.RemindAt, ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)))
+	if got.Category == nil || *got.Category != "Дача" {
+		t.Fatalf("category = %v, want Дача", got.Category)
+	}
+
+	evening, err := Parse("каждый вечер полить петунии", time.Date(2026, 6, 19, 10, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatalf("Parse evening error: %v", err)
+	}
+	assertTimePtr(t, "evening remind", evening.RemindAt, ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)))
 }
 
 func mustLocation(t *testing.T) *time.Location {
