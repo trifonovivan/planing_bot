@@ -99,7 +99,7 @@ jobs:
     name: Deploy over SSH
     runs-on: ubuntu-latest
     needs:
-      - publish
+      - ci
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -107,9 +107,6 @@ jobs:
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/planner-bot' }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-      IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'planner' }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -128,7 +125,6 @@ jobs:
           test -n "$DEPLOY_HOST"
           test -n "$DEPLOY_USER"
           test -n "$DEPLOY_SSH_KEY"
-          test -n "$GHCR_TOKEN"
           test -n "$BOT_TOKEN"
           test -n "$POSTGRES_PASSWORD"
           test -n "$DATABASE_URL"
@@ -143,7 +139,6 @@ jobs:
       - name: Prepare remote env
         run: |
           cat > .deploy.env <<EOF
-          IMAGE=$IMAGE
           BOT_TOKEN=$BOT_TOKEN
           POSTGRES_USER=$POSTGRES_USER
           POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -156,14 +151,21 @@ jobs:
           METRICS_BIND=$METRICS_BIND
           EOF
 
-      - name: Upload compose files
+      - name: Pack release
         run: |
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/migrations'"
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" deploy/docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.yml"
+          tar \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='.idea' \
+            --exclude='tmp' \
+            -czf release.tar.gz .
+
+      - name: Upload release
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" release.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/release.tar.gz"
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .deploy.env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env"
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" migrations/*.sql "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/migrations/"
 
       - name: Deploy
         run: |
-          printf '%s\n' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose pull app && docker compose up -d --remove-orphans && docker image prune -f"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && tar -xzf release.tar.gz && rm release.tar.gz && cp deploy/docker-compose.prod.yml docker-compose.yml && docker compose up -d --build --remove-orphans && docker image prune -f"
