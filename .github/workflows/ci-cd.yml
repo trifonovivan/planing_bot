@@ -188,4 +188,4 @@ jobs:
 
       - name: Deploy
         run: |
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && tar -xzf release.tar.gz && rm release.tar.gz && cp deploy/docker-compose.prod.yml docker-compose.yml && docker compose up -d --build --remove-orphans && docker image prune -f"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && tar -xzf release.tar.gz && rm release.tar.gz && cp deploy/docker-compose.prod.yml docker-compose.yml && docker compose up -d --build --force-recreate --remove-orphans && docker image prune -f"
