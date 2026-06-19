@@ -29,7 +29,7 @@ func TestParseRequiredScenarios(t *testing.T) {
 			text:       "завтра купить корм",
 			wantTitle:  "купить корм",
 			wantDue:    ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP2,
 			wantCat:    "Покупки",
 		},
@@ -91,8 +91,8 @@ func TestParseRequiredScenarios(t *testing.T) {
 			name:       "weekday part of day",
 			text:       "в пятницу вечером купить продукты",
 			wantTitle:  "купить продукты",
-			wantDue:    ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 19, 18, 0, 0, 0, loc)),
+			wantDue:    ptrTime(time.Date(2026, 6, 19, 20, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Покупки",
 		},
@@ -101,7 +101,7 @@ func TestParseRequiredScenarios(t *testing.T) {
 			text:       "на выходных полить теплицу",
 			wantTitle:  "полить теплицу",
 			wantDue:    ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Дача",
 		},
@@ -130,7 +130,7 @@ func TestParseRequiredScenarios(t *testing.T) {
 			text:       "завтра завтра купить корм",
 			wantTitle:  "купить корм",
 			wantDue:    ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP2,
 			wantCat:    "Покупки",
 			wantWarn:   "matched multiple date expressions",
@@ -204,7 +204,7 @@ func TestParseRequiredScenarios(t *testing.T) {
 			text:       "  ,  завтра,   купить    корм , ",
 			wantTitle:  "купить корм",
 			wantDue:    ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP2,
 			wantCat:    "Покупки",
 		},
@@ -220,8 +220,8 @@ func TestParseRequiredScenarios(t *testing.T) {
 			name:       "day after tomorrow morning",
 			text:       "послезавтра утром сдать анализы",
 			wantTitle:  "сдать анализы",
-			wantDue:    ptrTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 21, 8, 0, 0, 0, loc)),
+			wantDue:    ptrTime(time.Date(2026, 6, 21, 10, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Здоровье",
 		},
@@ -329,7 +329,7 @@ func TestRecurrenceDetection(t *testing.T) {
 		t.Fatalf("recurrence = %v, want daily", got.RecurrenceRule)
 	}
 	assertTimePtr(t, "due", got.DueAt, ptrTime(time.Date(2026, 6, 20, 23, 59, 0, 0, loc)))
-	assertTimePtr(t, "remind", got.RemindAt, ptrTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)))
+	assertTimePtr(t, "remind", got.RemindAt, ptrTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)))
 	if got.Category == nil || *got.Category != "Дача" {
 		t.Fatalf("category = %v, want Дача", got.Category)
 	}
@@ -338,7 +338,13 @@ func TestRecurrenceDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse evening error: %v", err)
 	}
-	assertTimePtr(t, "evening remind", evening.RemindAt, ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)))
+	assertTimePtr(t, "evening remind", evening.RemindAt, ptrTime(time.Date(2026, 6, 19, 20, 0, 0, 0, loc)))
+
+	daytime, err := Parse("завтра днём созвон", time.Date(2026, 6, 19, 10, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatalf("Parse daytime error: %v", err)
+	}
+	assertTimePtr(t, "daytime due", daytime.DueAt, ptrTime(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)))
 }
 
 func mustLocation(t *testing.T) *time.Location {

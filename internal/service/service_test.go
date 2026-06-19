@@ -120,7 +120,7 @@ func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
 	if created.Task.Title != "Нужно поливать петунии" {
 		t.Fatalf("title = %q", created.Task.Title)
 	}
-	assertServiceTimePtr(t, "initial remind", created.Task.RemindAt, ptrServiceTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)))
+	assertServiceTimePtr(t, "initial remind", created.Task.RemindAt, ptrServiceTime(time.Date(2026, 6, 20, 10, 0, 0, 0, loc)))
 
 	done, err := svc.MarkDone(ctx, user, created.Task.ID)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
 	if done.Status == domain.StatusDone || done.DoneAt != nil {
 		t.Fatalf("recurring task was closed: %+v", done)
 	}
-	assertServiceTimePtr(t, "next remind", done.RemindAt, ptrServiceTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)))
+	assertServiceTimePtr(t, "next remind", done.RemindAt, ptrServiceTime(time.Date(2026, 6, 21, 10, 0, 0, 0, loc)))
 	if len(store.reminders) != 2 {
 		t.Fatalf("reminders count = %d, want 2", len(store.reminders))
 	}

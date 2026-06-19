@@ -75,7 +75,7 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 	} else if date.found {
 		due := time.Date(date.value.Year(), date.value.Month(), date.value.Day(), 23, 59, 0, 0, location)
 		dueAt = &due
-		remind := time.Date(date.value.Year(), date.value.Month(), date.value.Day(), 9, 0, 0, 0, location)
+		remind := time.Date(date.value.Year(), date.value.Month(), date.value.Day(), 10, 0, 0, 0, location)
 		remindAt = &remind
 	} else if clock.found {
 		due := time.Date(now.Year(), now.Month(), now.Day(), clock.hour, clock.minute, 0, 0, location)
@@ -130,7 +130,7 @@ func Parse(text string, now time.Time, location *time.Location) (ParseResult, er
 }
 
 func nextDailyReminder(now time.Time, location *time.Location, clock parsedClock) time.Time {
-	hour, minute := 9, 0
+	hour, minute := 10, 0
 	if clock.found {
 		hour = clock.hour
 		minute = clock.minute
@@ -355,10 +355,10 @@ func parseClock(lower string) (parsedClock, []string) {
 		hour   int
 		minute int
 	}{
-		{word: "утром", hour: 9},
-		{word: "днём", hour: 14},
-		{word: "днем", hour: 14},
-		{word: "вечером", hour: 19},
+		{word: "утром", hour: 10},
+		{word: "днём", hour: 12},
+		{word: "днем", hour: 12},
+		{word: "вечером", hour: 20},
 		{word: "ночью", hour: 22},
 	}
 	for _, item := range partOfDay {
@@ -460,11 +460,11 @@ func detectRecurrence(lower string) (*domain.RecurrenceRule, parsedClock) {
 	rule := domain.RecurrenceDaily
 	switch {
 	case regexp.MustCompile(`(?i)(^|[\s,])(каждый\s+день|ежедневно)($|[\s,])`).MatchString(lower):
-		return &rule, parsedClock{hour: 9, minute: 0, found: true}
+		return &rule, parsedClock{hour: 10, minute: 0, found: true}
 	case regexp.MustCompile(`(?i)(^|[\s,])каждое\s+утро($|[\s,])`).MatchString(lower):
-		return &rule, parsedClock{hour: 9, minute: 0, found: true}
+		return &rule, parsedClock{hour: 10, minute: 0, found: true}
 	case regexp.MustCompile(`(?i)(^|[\s,])каждый\s+вечер($|[\s,])`).MatchString(lower):
-		return &rule, parsedClock{hour: 19, minute: 0, found: true}
+		return &rule, parsedClock{hour: 20, minute: 0, found: true}
 	default:
 		return nil, parsedClock{}
 	}
