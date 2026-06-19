@@ -24,10 +24,12 @@ type Store interface {
 	TaskByID(ctx context.Context, taskID int64) (*domain.Task, error)
 	TaskRecipient(ctx context.Context, taskID int64) (*domain.User, error)
 	UpdateTaskStatus(ctx context.Context, taskID int64, userID int64, status domain.Status, at time.Time) (*domain.Task, error)
+	UpdateTaskSchedule(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error)
 	PostponeTask(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error)
 	TasksForRange(ctx context.Context, userID int64, start time.Time, end time.Time) ([]domain.Task, error)
 	DueReminderNotifications(ctx context.Context, now time.Time, limit int) ([]ReminderNotification, error)
 	MarkReminderSent(ctx context.Context, reminderID int64, sentAt time.Time) error
+	MarkTaskRemindersSentBefore(ctx context.Context, taskID int64, before time.Time, sentAt time.Time) error
 	UsersForDigest(ctx context.Context) ([]domain.User, error)
 	HasDigestRun(ctx context.Context, userID int64, digestDate time.Time) (bool, error)
 	MarkDigestRun(ctx context.Context, userID int64, digestDate time.Time, sentAt time.Time) error
@@ -136,6 +138,7 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 		Status:         status,
 		Priority:       parsed.Priority,
 		Category:       parsed.Category,
+		RecurrenceRule: parsed.RecurrenceRule,
 		DueAt:          parsed.DueAt,
 		RemindAt:       parsed.RemindAt,
 	}
@@ -164,6 +167,28 @@ func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, task
 	user, _, err := s.RegisterUser(ctx, tgUser)
 	if err != nil {
 		return nil, err
+	}
+	currentTask, err := s.store.TaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	if currentTask.RecurrenceRule != nil {
+		now := s.now()
+		if currentTask.RemindAt != nil {
+			if err := s.store.MarkTaskRemindersSentBefore(ctx, taskID, currentTask.RemindAt.Add(time.Nanosecond), now); err != nil {
+				return nil, fmt.Errorf("mark current recurring reminders sent: %w", err)
+			}
+		}
+		task, err := s.scheduleNextRecurringTask(ctx, *currentTask, user.ID, now, "done")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.CreateTaskEvent(ctx, taskID, user.ID, "recurring_done", emptyPayload()); err != nil {
+			return nil, fmt.Errorf("create task event: %w", err)
+		}
+		s.incTaskMetric("task_done_total", *task, user.ID)
+		s.logInfo("done_task", taskLogFields(*task, user.ID))
+		return task, nil
 	}
 	task, err := s.store.UpdateTaskStatus(ctx, taskID, user.ID, domain.StatusDone, s.now())
 	if err != nil {
@@ -289,6 +314,23 @@ func (s *Service) MarkReminderSent(ctx context.Context, reminderID int64, sentAt
 	return s.store.MarkReminderSent(ctx, reminderID, sentAt)
 }
 
+func (s *Service) ScheduleNextRecurringReminder(ctx context.Context, notification ReminderNotification, sentAt time.Time) (*domain.Task, error) {
+	if notification.Task.RecurrenceRule == nil {
+		return &notification.Task, nil
+	}
+	task, err := s.scheduleNextRecurringTask(ctx, notification.Task, notification.User.ID, sentAt, "reminder_sent")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.CreateTaskEvent(ctx, notification.Task.ID, notification.User.ID, "recurrence_scheduled", map[string]any{
+		"source":    "reminder_sent",
+		"remind_at": nullableTime(task.RemindAt),
+	}); err != nil {
+		return nil, fmt.Errorf("create task event: %w", err)
+	}
+	return task, nil
+}
+
 func (s *Service) DueDigests(ctx context.Context, now time.Time, hour int, minute int) ([]DigestNotification, error) {
 	users, err := s.store.UsersForDigest(ctx)
 	if err != nil {
@@ -358,6 +400,62 @@ func nullableTime(t *time.Time) any {
 
 func emptyPayload() json.RawMessage {
 	return json.RawMessage(`{}`)
+}
+
+func (s *Service) scheduleNextRecurringTask(ctx context.Context, task domain.Task, userID int64, at time.Time, source string) (*domain.Task, error) {
+	nextRemindAt, nextDueAt, err := nextRecurringSchedule(task, at, s.defaultLocation)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.store.UpdateTaskSchedule(ctx, task.ID, userID, &nextDueAt, &nextRemindAt, at)
+	if err != nil {
+		return nil, fmt.Errorf("update recurring task schedule: %w", err)
+	}
+	if err := s.store.CreateTaskReminder(ctx, task.ID, nextRemindAt); err != nil {
+		return nil, fmt.Errorf("create next recurring reminder: %w", err)
+	}
+	if err := s.store.CreateTaskEvent(ctx, task.ID, userID, "recurrence_advanced", map[string]any{
+		"source":    source,
+		"remind_at": nextRemindAt.Format(time.RFC3339),
+		"due_at":    nextDueAt.Format(time.RFC3339),
+	}); err != nil {
+		return nil, fmt.Errorf("create task event: %w", err)
+	}
+	return updated, nil
+}
+
+func nextRecurringSchedule(task domain.Task, at time.Time, fallbackLocation *time.Location) (time.Time, time.Time, error) {
+	if task.RecurrenceRule == nil {
+		return time.Time{}, time.Time{}, errors.New("task is not recurring")
+	}
+	location := fallbackLocation
+	if task.RemindAt != nil {
+		location = task.RemindAt.Location()
+	}
+	base := at.In(location)
+	if task.RemindAt != nil {
+		base = task.RemindAt.In(location)
+	}
+
+	var nextRemind time.Time
+	switch *task.RecurrenceRule {
+	case domain.RecurrenceDaily:
+		nextRemind = base.AddDate(0, 0, 1)
+		for !nextRemind.After(at.In(location)) {
+			nextRemind = nextRemind.AddDate(0, 0, 1)
+		}
+	default:
+		return time.Time{}, time.Time{}, fmt.Errorf("unsupported recurrence rule %q", *task.RecurrenceRule)
+	}
+	nextDue := time.Date(nextRemind.Year(), nextRemind.Month(), nextRemind.Day(), 23, 59, 0, 0, location)
+	if task.DueAt != nil {
+		due := task.DueAt.In(location)
+		nextDue = time.Date(nextRemind.Year(), nextRemind.Month(), nextRemind.Day(), due.Hour(), due.Minute(), due.Second(), due.Nanosecond(), location)
+		if nextDue.Before(nextRemind) {
+			nextDue = time.Date(nextRemind.Year(), nextRemind.Month(), nextRemind.Day(), 23, 59, 0, 0, location)
+		}
+	}
+	return nextRemind, nextDue, nil
 }
 
 func (s *Service) observeParser(start time.Time, err error) {

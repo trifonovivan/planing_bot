@@ -1,0 +1,2 @@
+-- Intentionally left blank.
+-- Recurrence metadata is retained because task data may be used for analytics/model training.

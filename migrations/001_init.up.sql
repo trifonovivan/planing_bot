@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     status TEXT NOT NULL,
     priority TEXT NOT NULL,
     category TEXT,
+    recurrence_rule TEXT,
     due_at TIMESTAMPTZ,
     remind_at TIMESTAMPTZ,
     postponed_count INTEGER NOT NULL DEFAULT 0,

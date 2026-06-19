@@ -86,9 +86,9 @@ func (s *Store) CreateTask(ctx context.Context, task *domain.Task) error {
 	const query = `
 INSERT INTO tasks (
     workspace_id, creator_user_id, assignee_user_id, title, description, status, priority,
-    category, due_at, remind_at
+    category, recurrence_rule, due_at, remind_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, created_at, updated_at`
 	return s.db.QueryRowContext(ctx, query,
 		task.WorkspaceID,
@@ -99,6 +99,7 @@ RETURNING id, created_at, updated_at`
 		task.Status,
 		task.Priority,
 		task.Category,
+		task.RecurrenceRule,
 		task.DueAt,
 		task.RemindAt,
 	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt)
@@ -167,6 +168,22 @@ RETURNING id`
 	return s.TaskByID(ctx, id)
 }
 
+func (s *Store) UpdateTaskSchedule(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
+	const query = `
+UPDATE tasks
+SET due_at = $3,
+    remind_at = $4,
+    updated_at = $5
+WHERE id = $1
+  AND (creator_user_id = $2 OR assignee_user_id = $2)
+RETURNING id`
+	var id int64
+	if err := s.db.QueryRowContext(ctx, query, taskID, userID, dueAt, remindAt, at).Scan(&id); err != nil {
+		return nil, err
+	}
+	return s.TaskByID(ctx, id)
+}
+
 func (s *Store) PostponeTask(ctx context.Context, taskID int64, userID int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
 	const query = `
 UPDATE tasks
@@ -189,7 +206,7 @@ func (s *Store) TasksForRange(ctx context.Context, userID int64, start time.Time
 	const query = `
 SELECT
     t.id, t.workspace_id, t.creator_user_id, t.assignee_user_id, t.title, t.description,
-    t.status, t.priority, t.category, t.due_at, t.remind_at, t.postponed_count,
+    t.status, t.priority, t.category, t.recurrence_rule, t.due_at, t.remind_at, t.postponed_count,
     t.created_at, t.updated_at, t.done_at, t.cancelled_at
 FROM tasks t
 JOIN workspaces w ON w.id = t.workspace_id
@@ -221,7 +238,7 @@ func (s *Store) DueReminderNotifications(ctx context.Context, now time.Time, lim
 SELECT
     r.id, r.task_id, r.remind_at, r.sent_at, r.created_at,
     t.id, t.workspace_id, t.creator_user_id, t.assignee_user_id, t.title, t.description,
-    t.status, t.priority, t.category, t.due_at, t.remind_at, t.postponed_count,
+    t.status, t.priority, t.category, t.recurrence_rule, t.due_at, t.remind_at, t.postponed_count,
     t.created_at, t.updated_at, t.done_at, t.cancelled_at,
     u.id, u.telegram_id, u.username, u.first_name, u.last_name, u.timezone, u.created_at, u.updated_at
 FROM task_reminders r
@@ -259,6 +276,16 @@ func (s *Store) MarkReminderSent(ctx context.Context, reminderID int64, sentAt t
 UPDATE task_reminders
 SET sent_at = $2
 WHERE id = $1 AND sent_at IS NULL`, reminderID, sentAt)
+	return err
+}
+
+func (s *Store) MarkTaskRemindersSentBefore(ctx context.Context, taskID int64, before time.Time, sentAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE task_reminders
+SET sent_at = $3
+WHERE task_id = $1
+  AND remind_at < $2
+  AND sent_at IS NULL`, taskID, before, sentAt)
 	return err
 }
 
@@ -407,7 +434,7 @@ func taskSelectSQL(where string) string {
 	return fmt.Sprintf(`
 SELECT
     t.id, t.workspace_id, t.creator_user_id, t.assignee_user_id, t.title, t.description,
-    t.status, t.priority, t.category, t.due_at, t.remind_at, t.postponed_count,
+    t.status, t.priority, t.category, t.recurrence_rule, t.due_at, t.remind_at, t.postponed_count,
     t.created_at, t.updated_at, t.done_at, t.cancelled_at
 FROM tasks t
 %s`, where)
@@ -418,6 +445,7 @@ func scanTask(scanner rowScanner) (*domain.Task, error) {
 	var assigneeID sql.NullInt64
 	var description sql.NullString
 	var category sql.NullString
+	var recurrenceRule sql.NullString
 	var dueAt sql.NullTime
 	var remindAt sql.NullTime
 	var doneAt sql.NullTime
@@ -433,6 +461,7 @@ func scanTask(scanner rowScanner) (*domain.Task, error) {
 		&task.Status,
 		&task.Priority,
 		&category,
+		&recurrenceRule,
 		&dueAt,
 		&remindAt,
 		&task.PostponedCount,
@@ -452,6 +481,10 @@ func scanTask(scanner rowScanner) (*domain.Task, error) {
 	}
 	if category.Valid {
 		task.Category = &category.String
+	}
+	if recurrenceRule.Valid {
+		rule := domain.RecurrenceRule(recurrenceRule.String)
+		task.RecurrenceRule = &rule
 	}
 	if dueAt.Valid {
 		task.DueAt = &dueAt.Time
@@ -475,6 +508,7 @@ func scanReminderNotification(scanner rowScanner, reminder *domain.TaskReminder)
 	var assigneeID sql.NullInt64
 	var description sql.NullString
 	var category sql.NullString
+	var recurrenceRule sql.NullString
 	var dueAt sql.NullTime
 	var taskRemindAt sql.NullTime
 	var doneAt sql.NullTime
@@ -495,6 +529,7 @@ func scanReminderNotification(scanner rowScanner, reminder *domain.TaskReminder)
 		&task.Status,
 		&task.Priority,
 		&category,
+		&recurrenceRule,
 		&dueAt,
 		&taskRemindAt,
 		&task.PostponedCount,
@@ -525,6 +560,10 @@ func scanReminderNotification(scanner rowScanner, reminder *domain.TaskReminder)
 	}
 	if category.Valid {
 		task.Category = &category.String
+	}
+	if recurrenceRule.Valid {
+		rule := domain.RecurrenceRule(recurrenceRule.String)
+		task.RecurrenceRule = &rule
 	}
 	if dueAt.Valid {
 		task.DueAt = &dueAt.Time

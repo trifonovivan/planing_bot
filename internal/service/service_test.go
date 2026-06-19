@@ -100,6 +100,44 @@ func TestServiceTaskFlow(t *testing.T) {
 	}
 }
 
+func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc)
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 19, 23, 23, 0, 0, loc)
+	}
+
+	user := domain.TelegramUser{TelegramID: 1001, Username: "ivan"}
+	created, err := svc.CreateTaskFromText(ctx, user, "Нужно поливать петунии каждый день")
+	if err != nil {
+		t.Fatalf("CreateTaskFromText error: %v", err)
+	}
+	if created.Task.RecurrenceRule == nil || *created.Task.RecurrenceRule != domain.RecurrenceDaily {
+		t.Fatalf("recurrence = %v, want daily", created.Task.RecurrenceRule)
+	}
+	if created.Task.Title != "Нужно поливать петунии" {
+		t.Fatalf("title = %q", created.Task.Title)
+	}
+	assertServiceTimePtr(t, "initial remind", created.Task.RemindAt, ptrServiceTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)))
+
+	done, err := svc.MarkDone(ctx, user, created.Task.ID)
+	if err != nil {
+		t.Fatalf("MarkDone error: %v", err)
+	}
+	if done.Status == domain.StatusDone || done.DoneAt != nil {
+		t.Fatalf("recurring task was closed: %+v", done)
+	}
+	assertServiceTimePtr(t, "next remind", done.RemindAt, ptrServiceTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)))
+	if len(store.reminders) != 2 {
+		t.Fatalf("reminders count = %d, want 2", len(store.reminders))
+	}
+	if store.reminders[1].SentAt == nil {
+		t.Fatal("initial recurring reminder was not marked sent")
+	}
+}
+
 type fakeStore struct {
 	nextUserID       int64
 	nextWorkspaceID  int64
@@ -203,6 +241,14 @@ func (s *fakeStore) UpdateTaskStatus(_ context.Context, taskID int64, _ int64, s
 	return cloneTask(task), nil
 }
 
+func (s *fakeStore) UpdateTaskSchedule(_ context.Context, taskID int64, _ int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
+	task := s.tasks[taskID]
+	task.DueAt = dueAt
+	task.RemindAt = remindAt
+	task.UpdatedAt = at
+	return cloneTask(task), nil
+}
+
 func (s *fakeStore) PostponeTask(_ context.Context, taskID int64, _ int64, dueAt *time.Time, remindAt *time.Time, at time.Time) (*domain.Task, error) {
 	task := s.tasks[taskID]
 	task.Status = domain.StatusPostponed
@@ -241,6 +287,16 @@ func (s *fakeStore) MarkReminderSent(_ context.Context, _ int64, _ time.Time) er
 	return nil
 }
 
+func (s *fakeStore) MarkTaskRemindersSentBefore(_ context.Context, taskID int64, before time.Time, sentAt time.Time) error {
+	for _, reminder := range s.reminders {
+		if reminder.TaskID == taskID && reminder.SentAt == nil && reminder.RemindAt.Before(before) {
+			value := sentAt
+			reminder.SentAt = &value
+		}
+	}
+	return nil
+}
+
 func (s *fakeStore) UsersForDigest(_ context.Context) ([]domain.User, error) {
 	users := make([]domain.User, 0, len(s.usersByTelegram))
 	for _, user := range s.usersByTelegram {
@@ -274,6 +330,10 @@ func cloneTask(task *domain.Task) *domain.Task {
 		value := *task.Category
 		clone.Category = &value
 	}
+	if task.RecurrenceRule != nil {
+		value := *task.RecurrenceRule
+		clone.RecurrenceRule = &value
+	}
 	if task.DueAt != nil {
 		value := *task.DueAt
 		clone.DueAt = &value
@@ -291,6 +351,26 @@ func cloneTask(task *domain.Task) *domain.Task {
 		clone.CancelledAt = &value
 	}
 	return &clone
+}
+
+func ptrServiceTime(t time.Time) *time.Time {
+	return &t
+}
+
+func assertServiceTimePtr(t *testing.T, name string, got *time.Time, want *time.Time) {
+	t.Helper()
+	if want == nil {
+		if got != nil {
+			t.Fatalf("%s = %v, want nil", name, got)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatalf("%s = nil, want %v", name, *want)
+	}
+	if !got.Equal(*want) {
+		t.Fatalf("%s = %v, want %v", name, *got, *want)
+	}
 }
 
 func cloneUser(user *domain.User) *domain.User {

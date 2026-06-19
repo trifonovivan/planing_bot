@@ -361,10 +361,11 @@ func formatCreatedTask(result *service.CreateTaskResult) string {
 	return fmt.Sprintf(`✅ Задача создана
 
 Название: %s
+Повтор: %s
 Срок: %s
 Напомнить: %s
 Приоритет: %s
-Категория: %s`, task.Title, formatOptionalTime(task.DueAt), formatOptionalTime(task.RemindAt), task.Priority, category)
+Категория: %s`, task.Title, formatRecurrence(task.RecurrenceRule), formatOptionalTime(task.DueAt), formatOptionalTime(task.RemindAt), task.Priority, category)
 }
 
 func formatTaskList(title string, tasks []domain.Task) string {
@@ -407,6 +408,18 @@ func formatOptionalTime(t *time.Time) string {
 		return "—"
 	}
 	return t.Format("02.01.2006 15:04")
+}
+
+func formatRecurrence(rule *domain.RecurrenceRule) string {
+	if rule == nil {
+		return "—"
+	}
+	switch *rule {
+	case domain.RecurrenceDaily:
+		return "каждый день"
+	default:
+		return string(*rule)
+	}
 }
 
 func taskKeyboard(taskID int64) map[string]any {

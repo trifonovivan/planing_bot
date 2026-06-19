@@ -10,6 +10,7 @@ MVP Telegram-бота для планирования задач на Go.
 - разбирать русские даты, время, приоритеты и простые категории
 - показывать `/today` и `/week`
 - закрывать, отменять и переносить задачи inline-кнопками
+- поддерживать ежедневные повторяющиеся задачи: `каждый день`, `ежедневно`, `каждое утро`, `каждый вечер`
 - отправлять reminders и утренний digest
 - отдавать Prometheus-compatible метрики на `/metrics`
 - писать JSON logs в stdout
@@ -60,7 +61,7 @@ docker compose up --build
 Compose поднимает:
 
 - `postgres`
-- `migrate`, который применяет `migrations/001_init.up.sql`
+- `migrate`, который применяет все `migrations/*.up.sql` по порядку
 - `app`
 
 ## Локальный запуск без app-контейнера
@@ -77,7 +78,7 @@ docker compose up postgres -d
 set -a
 source .env
 set +a
-PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
+for f in migrations/*.up.sql; do PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
 Запустить бота:
@@ -224,6 +225,7 @@ scheduler_iteration_duration_seconds
 
 - отмена задачи переводит ее в `cancelled` и заполняет `cancelled_at`
 - выполнение задачи переводит ее в `done` и заполняет `done_at`
+- выполнение повторяющейся задачи не закрывает всю задачу, а сдвигает следующий reminder и пишет событие выполнения текущего экземпляра
 - перенос задачи сохраняет историю в `task_events` и увеличивает `postponed_count`
 - внешние ключи в БД используют `ON DELETE RESTRICT`, чтобы случайный delete пользователя/workspace/task не удалил связанные данные каскадом
 - `task_id` и `title` не используются в labels метрик
@@ -245,6 +247,8 @@ scheduler_iteration_duration_seconds
 срочно оплатить ипотеку
 не срочно посмотреть PostgreSQL internals
 когда-нибудь изучить ClickHouse
+Нужно поливать петунии каждый день
+каждый вечер полить петунии
 ```
 
 ## Структура

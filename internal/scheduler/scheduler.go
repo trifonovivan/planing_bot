@@ -106,6 +106,9 @@ func (s *Scheduler) sendReminders(ctx context.Context, now time.Time) error {
 		if err := s.service.MarkReminderSent(ctx, notification.Reminder.ID, now); err != nil {
 			return err
 		}
+		if _, err := s.service.ScheduleNextRecurringReminder(ctx, notification, now); err != nil {
+			return err
+		}
 		if s.metrics != nil {
 			s.metrics.Inc("reminder_sent_total", metrics.Labels{
 				"workspace_id": fmt.Sprint(notification.Task.WorkspaceID),

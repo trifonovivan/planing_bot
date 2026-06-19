@@ -29,7 +29,7 @@ services:
     command:
       - sh
       - -c
-      - psql -h postgres -v ON_ERROR_STOP=1 -f /migrations/001_init.up.sql
+      - for f in /migrations/*.up.sql; do psql -h postgres -v ON_ERROR_STOP=1 -f "$$f"; done
 
   app:
     build: .
