@@ -340,7 +340,7 @@
     },
     {
       "id": 6,
-      "title": "p95 обработки Telegram",
+      "title": "Перцентиль обработки Telegram",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -401,16 +401,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени обработки одного Telegram update. Метрика: telegram_update_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени обработки одного Telegram update. Метрика: telegram_update_duration_seconds."
     },
     {
       "id": 7,
-      "title": "p95 итерации планировщика",
+      "title": "Перцентиль итерации планировщика",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -471,12 +471,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени одной итерации scheduler, который отправляет reminders/digests. Метрика: scheduler_iteration_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени одной итерации scheduler, который отправляет reminders/digests. Метрика: scheduler_iteration_duration_seconds."
     },
     {
       "id": 8,
@@ -715,30 +715,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p50"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
-          "refId": "B",
-          "legendFormat": "p95"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
-          "refId": "C",
-          "legendFormat": "p99"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "p50, p95 и p99 времени обработки Telegram update. Помогает видеть деградацию пользовательского ответа."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени обработки Telegram update. Переключай p95, p99 или p999 сверху dashboard."
     },
     {
       "id": 12,
@@ -986,30 +968,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p50"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
-          "refId": "B",
-          "legendFormat": "p95"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
-          "refId": "C",
-          "legendFormat": "p99"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "p50, p95 и p99 времени scheduler iteration. Рост может означать проблемы с БД или отправкой сообщений."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени scheduler iteration. Рост высоких перцентилей может означать проблемы с БД или отправкой сообщений."
     }
   ],
   "refresh": "10s",
@@ -1022,7 +986,50 @@
   ],
   "templating": {
     "list": [
-
+      {
+        "current": {
+          "selected": true,
+          "text": "p95",
+          "value": "0.95"
+        },
+        "description": "Выбирает перцентиль для всех latency-панелей dashboard: p95, p99, p999 и другие.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Перцентиль задержек",
+        "multi": false,
+        "name": "percentile",
+        "options": [
+          {
+            "selected": false,
+            "text": "p50",
+            "value": "0.5"
+          },
+          {
+            "selected": false,
+            "text": "p90",
+            "value": "0.9"
+          },
+          {
+            "selected": true,
+            "text": "p95",
+            "value": "0.95"
+          },
+          {
+            "selected": false,
+            "text": "p99",
+            "value": "0.99"
+          },
+          {
+            "selected": false,
+            "text": "p999",
+            "value": "0.999"
+          }
+        ],
+        "query": "p50 : 0.5, p90 : 0.9, p95 : 0.95, p99 : 0.99, p999 : 0.999",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
     ]
   },
   "time": {

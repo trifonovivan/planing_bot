@@ -294,7 +294,7 @@
     },
     {
       "id": 5,
-      "title": "p95 парсинга",
+      "title": "Перцентиль парсинга",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -355,16 +355,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени разбора пользовательского текста parser. Метрика: parser_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени разбора пользовательского текста parser. Метрика: parser_duration_seconds."
     },
     {
       "id": 6,
-      "title": "p95 запросов к хранилищу",
+      "title": "Перцентиль запросов к хранилищу",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -425,16 +425,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(storage_query_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(storage_query_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени операций storage layer. Метрика: storage_query_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени операций storage layer. Метрика: storage_query_duration_seconds."
     },
     {
       "id": 7,
-      "title": "p95 обработки Telegram",
+      "title": "Перцентиль обработки Telegram",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -495,16 +495,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(telegram_update_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени обработки входящего Telegram update. Метрика: telegram_update_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени обработки входящего Telegram update. Метрика: telegram_update_duration_seconds."
     },
     {
       "id": 8,
-      "title": "p95 планировщика",
+      "title": "Перцентиль планировщика",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -565,12 +565,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p95"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "95-й перцентиль времени scheduler iteration. Метрика: scheduler_iteration_duration_seconds."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени scheduler iteration. Метрика: scheduler_iteration_duration_seconds."
     },
     {
       "id": 9,
@@ -757,30 +757,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p50"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
-          "refId": "B",
-          "legendFormat": "p95"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(parser_duration_seconds_bucket[5m])) by (le))",
-          "refId": "C",
-          "legendFormat": "p99"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "p50, p95 и p99 времени parser. Рост p95/p99 означает, что обработка пользовательского текста замедляется."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени parser. Переключай p95, p99 или p999 сверху dashboard."
     },
     {
       "id": 12,
@@ -836,12 +818,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (operation, le) (rate(storage_query_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(${percentile}, sum by (operation, le) (rate(storage_query_duration_seconds_bucket[5m])))",
           "refId": "A",
-          "legendFormat": "p95 {{operation}}"
+          "legendFormat": "Перцентиль {{operation}}"
         }
       ],
-      "description": "p95 времени storage operations в разрезе operation. Помогает найти медленные запросы к БД."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени storage operations в разрезе operation. Помогает найти медленные запросы к БД."
     },
     {
       "id": 13,
@@ -1019,30 +1001,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(${percentile}, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
           "refId": "A",
-          "legendFormat": "p50"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
-          "refId": "B",
-          "legendFormat": "p95"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(scheduler_iteration_duration_seconds_bucket[5m])) by (le))",
-          "refId": "C",
-          "legendFormat": "p99"
+          "legendFormat": "Выбранный перцентиль"
         }
       ],
-      "description": "p50, p95 и p99 времени scheduler iteration. Влияет на своевременность reminders и digests."
+      "description": "Выбранный переменной «Перцентиль задержек» перцентиль времени scheduler iteration. Влияет на своевременность reminders и digests."
     },
     {
       "id": 16,
@@ -1116,7 +1080,50 @@
   ],
   "templating": {
     "list": [
-
+      {
+        "current": {
+          "selected": true,
+          "text": "p95",
+          "value": "0.95"
+        },
+        "description": "Выбирает перцентиль для всех latency-панелей dashboard: p95, p99, p999 и другие.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Перцентиль задержек",
+        "multi": false,
+        "name": "percentile",
+        "options": [
+          {
+            "selected": false,
+            "text": "p50",
+            "value": "0.5"
+          },
+          {
+            "selected": false,
+            "text": "p90",
+            "value": "0.9"
+          },
+          {
+            "selected": true,
+            "text": "p95",
+            "value": "0.95"
+          },
+          {
+            "selected": false,
+            "text": "p99",
+            "value": "0.99"
+          },
+          {
+            "selected": false,
+            "text": "p999",
+            "value": "0.999"
+          }
+        ],
+        "query": "p50 : 0.5, p90 : 0.9, p95 : 0.95, p99 : 0.99, p999 : 0.999",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
     ]
   },
   "time": {
