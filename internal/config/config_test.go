@@ -32,6 +32,7 @@ func TestLoadReadsSecretsFromFiles(t *testing.T) {
 	t.Setenv("BOT_TOKEN_FILE", botTokenFile)
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("DATABASE_URL_FILE", databaseURLFile)
+	t.Setenv("BOT_USERNAME", "@planner_bot")
 
 	cfg, err := Load()
 	if err != nil {
@@ -42,6 +43,9 @@ func TestLoadReadsSecretsFromFiles(t *testing.T) {
 	}
 	if got := cfg.DatabaseURL.Value(); got != "postgres://user:pass@localhost/db?sslmode=disable" {
 		t.Fatalf("DatabaseURL = %q", got)
+	}
+	if got := cfg.BotUsername; got != "planner_bot" {
+		t.Fatalf("BotUsername = %q", got)
 	}
 	if got := cfg.BotToken.String(); got != "<redacted>" {
 		t.Fatalf("BotToken.String() = %q", got)

@@ -68,7 +68,7 @@ func main() {
 	}
 
 	planner := service.New(store, cfg.DefaultTimezone, location, service.WithMetrics(registry), service.WithLogger(logger))
-	bot := telegram.New(cfg.BotToken.Value(), planner, telegram.WithMetrics(registry), telegram.WithLogger(logger))
+	bot := telegram.New(cfg.BotToken.Value(), planner, telegram.WithBotUsername(cfg.BotUsername), telegram.WithMetrics(registry), telegram.WithLogger(logger))
 	worker := scheduler.New(planner, bot, digestHour, digestMinute, scheduler.WithMetrics(registry), scheduler.WithLogger(logger))
 
 	go worker.Run(ctx)

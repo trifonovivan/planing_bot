@@ -12,6 +12,7 @@ MVP Telegram-бота для планирования задач на Go.
 - закрывать, отменять и переносить задачи inline-кнопками
 - поддерживать ежедневные повторяющиеся задачи: `каждый день`, `ежедневно`, `каждое утро`, `каждый вечер`
 - отправлять reminders и утренний digest
+- связывать профили и ставить задачи связанным пользователям по алиасам
 - отдавать Prometheus-compatible метрики на `/metrics`
 - писать JSON logs в stdout
 
@@ -36,6 +37,7 @@ cp .env.example .env
 ```text
 BOT_TOKEN=
 BOT_TOKEN_FILE=
+BOT_USERNAME=
 POSTGRES_USER=planner
 POSTGRES_PASSWORD=change_me
 POSTGRES_DB=planner
@@ -49,6 +51,7 @@ METRICS_ADDR=:8080
 ```
 
 `BOT_TOKEN` берется у BotFather. Реальные секреты хранятся только в локальном `.env` или в файлах, переданных через `BOT_TOKEN_FILE` / `DATABASE_URL_FILE`.
+`BOT_USERNAME` опционален: если он задан, бот генерирует полноценные invite-ссылки вида `https://t.me/<bot>?start=link_<token>`. Если не задан, бот показывает код `link_<token>`, который можно принять через `/accept`.
 
 В коде нет дефолтов для `BOT_TOKEN` и `DATABASE_URL`: приложение не стартует, пока они явно не заданы.
 
@@ -85,6 +88,7 @@ for f in migrations/*.up.sql; do PGPASSWORD="$POSTGRES_PASSWORD" psql -h localho
 
 ```bash
 export BOT_TOKEN="<telegram-bot-token>"
+export BOT_USERNAME="<telegram-bot-username>"
 export DATABASE_URL="postgres://planner:<password>@localhost:5432/planner?sslmode=disable"
 export DEFAULT_TIMEZONE="Europe/Moscow"
 export DIGEST_TIME="09:30"
@@ -249,6 +253,38 @@ scheduler_iteration_duration_seconds
 когда-нибудь изучить ClickHouse
 Нужно поливать петунии каждый день
 каждый вечер полить петунии
+```
+
+## Связка профилей
+
+Пользователь создает invite и сразу указывает, как будет называть второго человека:
+
+```text
+/link мама, мам, Таня
+```
+
+Бот сгенерирует `link_<token>` или deep-link, если задан `BOT_USERNAME`. Второй пользователь открывает ссылку и указывает свои алиасы для пригласившего:
+
+```text
+/accept <token> Ваня, Иван, сын
+```
+
+После принятия resolver использует персональный словарь алиасов и типовые падежные формы:
+
+```text
+поставь маме задачу купить молоко
+маме нужно оплатить интернет
+Ваня, купи на Ozon чай https://Ozon.ru/Product/ABC123
+купить маме подарок на ДР
+разбудить Ваню в 10 утра
+```
+
+Если алиас найден, но роль непонятна, бот спросит, кому поставить задачу.
+
+Посмотреть активные связки и алиасы:
+
+```text
+/links
 ```
 
 ## Структура

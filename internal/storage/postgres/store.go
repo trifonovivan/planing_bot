@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"planing_bot/internal/domain"
@@ -80,6 +81,137 @@ ON CONFLICT (workspace_id, user_id) DO NOTHING`, workspace.ID, userID, domain.Ro
 		return nil, err
 	}
 	return workspace, nil
+}
+
+func (s *Store) CreateProfileLinkInvite(ctx context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
+
+	link, err := scanProfileLink(tx.QueryRowContext(ctx, `
+INSERT INTO profile_links (invite_token, inviter_user_id, status)
+VALUES ($1, $2, $3)
+RETURNING id, invite_token, inviter_user_id, invitee_user_id, status, created_at, accepted_at, revoked_at`,
+		token, inviterUserID, domain.ProfileLinkPending,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if err := insertProfileAliases(ctx, tx, link.ID, inviterUserID, nil, aliases); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return link, nil
+}
+
+func (s *Store) AcceptProfileLinkInvite(ctx context.Context, token string, inviteeUserID int64, aliases []domain.ProfileLinkAliasInput, acceptedAt time.Time) (*domain.ProfileLink, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
+
+	link, err := scanProfileLink(tx.QueryRowContext(ctx, `
+SELECT id, invite_token, inviter_user_id, invitee_user_id, status, created_at, accepted_at, revoked_at
+FROM profile_links
+WHERE invite_token = $1
+FOR UPDATE`, token))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrProfileLinkNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if link.Status != domain.ProfileLinkPending {
+		return nil, service.ErrProfileLinkNotPending
+	}
+	if link.InviterUserID == inviteeUserID {
+		return nil, service.ErrProfileLinkSelf
+	}
+
+	link, err = scanProfileLink(tx.QueryRowContext(ctx, `
+UPDATE profile_links
+SET invitee_user_id = $2,
+    status = $3,
+    accepted_at = $4
+WHERE id = $1
+RETURNING id, invite_token, inviter_user_id, invitee_user_id, status, created_at, accepted_at, revoked_at`,
+		link.ID, inviteeUserID, domain.ProfileLinkActive, acceptedAt,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE profile_link_aliases
+SET target_user_id = $3
+WHERE link_id = $1 AND owner_user_id = $2 AND target_user_id IS NULL`,
+		link.ID, link.InviterUserID, inviteeUserID,
+	); err != nil {
+		return nil, err
+	}
+	inviterID := link.InviterUserID
+	if err := insertProfileAliases(ctx, tx, link.ID, inviteeUserID, &inviterID, aliases); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return link, nil
+}
+
+func (s *Store) LinkedProfiles(ctx context.Context, ownerUserID int64) ([]domain.LinkedProfile, error) {
+	const query = `
+SELECT
+    l.id,
+    u.id, u.telegram_id, u.username, u.first_name, u.last_name, u.timezone, u.created_at, u.updated_at,
+    COALESCE(string_agg(a.alias, E'\n' ORDER BY a.source ASC, a.alias ASC), '')
+FROM profile_links l
+JOIN users u ON u.id = CASE
+    WHEN l.inviter_user_id = $1 THEN l.invitee_user_id
+    ELSE l.inviter_user_id
+END
+LEFT JOIN profile_link_aliases a
+    ON a.link_id = l.id
+   AND a.owner_user_id = $1
+   AND a.target_user_id = u.id
+WHERE l.status = 'active'
+  AND (l.inviter_user_id = $1 OR l.invitee_user_id = $1)
+GROUP BY l.id, u.id, u.telegram_id, u.username, u.first_name, u.last_name, u.timezone, u.created_at, u.updated_at
+ORDER BY l.id`
+	rows, err := s.db.QueryContext(ctx, query, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	profiles := make([]domain.LinkedProfile, 0)
+	for rows.Next() {
+		var profile domain.LinkedProfile
+		var aliases string
+		if err := rows.Scan(
+			&profile.LinkID,
+			&profile.User.ID,
+			&profile.User.TelegramID,
+			&profile.User.Username,
+			&profile.User.FirstName,
+			&profile.User.LastName,
+			&profile.User.Timezone,
+			&profile.User.CreatedAt,
+			&profile.User.UpdatedAt,
+			&aliases,
+		); err != nil {
+			return nil, err
+		}
+		if aliases != "" {
+			profile.Aliases = strings.Split(aliases, "\n")
+		}
+		profiles = append(profiles, profile)
+	}
+	return profiles, rows.Err()
 }
 
 func (s *Store) CreateTask(ctx context.Context, task *domain.Task) error {
@@ -428,6 +560,55 @@ WHERE r.sent_at IS NULL
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+type contextExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertProfileAliases(ctx context.Context, execer contextExecer, linkID int64, ownerUserID int64, targetUserID *int64, aliases []domain.ProfileLinkAliasInput) error {
+	for _, alias := range aliases {
+		if alias.Alias == "" || alias.NormalizedAlias == "" {
+			continue
+		}
+		if _, err := execer.ExecContext(ctx, `
+INSERT INTO profile_link_aliases (link_id, owner_user_id, target_user_id, alias, normalized_alias, source)
+VALUES ($1, $2, $3, $4, $5, $6)`,
+			linkID, ownerUserID, targetUserID, alias.Alias, alias.NormalizedAlias, alias.Source,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanProfileLink(scanner rowScanner) (*domain.ProfileLink, error) {
+	var link domain.ProfileLink
+	var inviteeID sql.NullInt64
+	var acceptedAt sql.NullTime
+	var revokedAt sql.NullTime
+	if err := scanner.Scan(
+		&link.ID,
+		&link.InviteToken,
+		&link.InviterUserID,
+		&inviteeID,
+		&link.Status,
+		&link.CreatedAt,
+		&acceptedAt,
+		&revokedAt,
+	); err != nil {
+		return nil, err
+	}
+	if inviteeID.Valid {
+		link.InviteeUserID = &inviteeID.Int64
+	}
+	if acceptedAt.Valid {
+		link.AcceptedAt = &acceptedAt.Time
+	}
+	if revokedAt.Valid {
+		link.RevokedAt = &revokedAt.Time
+	}
+	return &link, nil
 }
 
 func taskSelectSQL(where string) string {
