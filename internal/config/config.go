@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	BotToken        Secret
+	BotUsername     string
 	DatabaseURL     Secret
 	AppEnv          string
 	DefaultTimezone string
@@ -46,6 +47,7 @@ func Load() (Config, error) {
 
 	return Config{
 		BotToken:        botToken,
+		BotUsername:     strings.TrimPrefix(getEnv("BOT_USERNAME", ""), "@"),
 		DatabaseURL:     databaseURL,
 		AppEnv:          getEnv("APP_ENV", "local"),
 		DefaultTimezone: getEnv("DEFAULT_TIMEZONE", "Europe/Moscow"),

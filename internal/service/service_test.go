@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"sort"
 	"strings"
@@ -138,15 +139,96 @@ func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
 	}
 }
 
+func TestLinkedProfileAssigneeResolution(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc)
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 19, 10, 0, 0, 0, loc)
+	}
+
+	ivan := domain.TelegramUser{TelegramID: 1001, Username: "ivan", FirstName: "Иван"}
+	mom := domain.TelegramUser{TelegramID: 2002, Username: "mom", FirstName: "Таня"}
+
+	invite, err := svc.CreateProfileLinkInvite(ctx, ivan, []string{"мама", "Таня"})
+	if err != nil {
+		t.Fatalf("CreateProfileLinkInvite error: %v", err)
+	}
+	if _, err := svc.AcceptProfileLinkInvite(ctx, mom, invite.Token, []string{"Ваня", "Иван", "сын"}); err != nil {
+		t.Fatalf("AcceptProfileLinkInvite error: %v", err)
+	}
+	ivanUser := store.usersByTelegram[ivan.TelegramID]
+	momUser := store.usersByTelegram[mom.TelegramID]
+
+	explicit, err := svc.CreateTaskFromText(ctx, ivan, "поставь маме задачу завтра купить молоко")
+	if err != nil {
+		t.Fatalf("explicit assignee CreateTaskFromText error: %v", err)
+	}
+	assertAssignee(t, explicit.Task, momUser.ID)
+	if explicit.Task.CreatorUserID != ivanUser.ID {
+		t.Fatalf("creator = %d, want %d", explicit.Task.CreatorUserID, ivanUser.ID)
+	}
+	if explicit.Task.WorkspaceID != store.workspacesByUser[momUser.ID].ID {
+		t.Fatalf("workspace = %d, want mom workspace %d", explicit.Task.WorkspaceID, store.workspacesByUser[momUser.ID].ID)
+	}
+	if explicit.Task.Title != "купить молоко" {
+		t.Fatalf("explicit title = %q, want %q", explicit.Task.Title, "купить молоко")
+	}
+
+	gift, err := svc.CreateTaskFromText(ctx, ivan, "купить маме подарок на ДР")
+	if err != nil {
+		t.Fatalf("gift CreateTaskFromText error: %v", err)
+	}
+	assertAssignee(t, gift.Task, ivanUser.ID)
+	if gift.Task.Title != "купить маме подарок на ДР" {
+		t.Fatalf("gift title = %q", gift.Task.Title)
+	}
+
+	wake, err := svc.CreateTaskFromText(ctx, mom, "разбудить Ваню в 10 утра")
+	if err != nil {
+		t.Fatalf("wake CreateTaskFromText error: %v", err)
+	}
+	assertAssignee(t, wake.Task, momUser.ID)
+
+	_, err = svc.CreateTaskFromText(ctx, ivan, "маме документы завтра")
+	var clarification *AssigneeClarificationError
+	if !errors.As(err, &clarification) {
+		t.Fatalf("ambiguous err = %v, want AssigneeClarificationError", err)
+	}
+	if clarification.TaskText != "маме документы завтра" {
+		t.Fatalf("clarification task text = %q", clarification.TaskText)
+	}
+	if len(clarification.Options) != 2 {
+		t.Fatalf("clarification options = %+v, want self and mom", clarification.Options)
+	}
+
+	manual, err := svc.CreateTaskForAssignee(ctx, ivan, clarification.TaskText, momUser.ID)
+	if err != nil {
+		t.Fatalf("CreateTaskForAssignee error: %v", err)
+	}
+	assertAssignee(t, manual.Task, momUser.ID)
+}
+
 type fakeStore struct {
 	nextUserID       int64
 	nextWorkspaceID  int64
 	nextTaskID       int64
 	nextReminderID   int64
+	nextLinkID       int64
 	usersByTelegram  map[int64]*domain.User
 	workspacesByUser map[int64]*domain.Workspace
+	linksByToken     map[string]*domain.ProfileLink
+	profileAliases   []fakeProfileAlias
 	tasks            map[int64]*domain.Task
 	reminders        map[int64]*domain.TaskReminder
+}
+
+type fakeProfileAlias struct {
+	LinkID       int64
+	OwnerUserID  int64
+	TargetUserID *int64
+	Alias        string
 }
 
 func newFakeStore() *fakeStore {
@@ -155,8 +237,10 @@ func newFakeStore() *fakeStore {
 		nextWorkspaceID:  1,
 		nextTaskID:       1,
 		nextReminderID:   1,
+		nextLinkID:       1,
 		usersByTelegram:  make(map[int64]*domain.User),
 		workspacesByUser: make(map[int64]*domain.Workspace),
+		linksByToken:     make(map[string]*domain.ProfileLink),
 		tasks:            make(map[int64]*domain.Task),
 		reminders:        make(map[int64]*domain.TaskReminder),
 	}
@@ -192,6 +276,94 @@ func (s *fakeStore) EnsurePersonalWorkspace(_ context.Context, userID int64) (*d
 	return cloneWorkspace(workspace), nil
 }
 
+func (s *fakeStore) CreateProfileLinkInvite(_ context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	link := &domain.ProfileLink{
+		ID:            s.nextLinkID,
+		InviteToken:   token,
+		InviterUserID: inviterUserID,
+		Status:        domain.ProfileLinkPending,
+	}
+	s.nextLinkID++
+	s.linksByToken[token] = link
+	for _, alias := range aliases {
+		s.profileAliases = append(s.profileAliases, fakeProfileAlias{
+			LinkID:      link.ID,
+			OwnerUserID: inviterUserID,
+			Alias:       alias.Alias,
+		})
+	}
+	return cloneProfileLink(link), nil
+}
+
+func (s *fakeStore) AcceptProfileLinkInvite(_ context.Context, token string, inviteeUserID int64, aliases []domain.ProfileLinkAliasInput, acceptedAt time.Time) (*domain.ProfileLink, error) {
+	link, ok := s.linksByToken[token]
+	if !ok {
+		return nil, ErrProfileLinkNotFound
+	}
+	if link.Status != domain.ProfileLinkPending {
+		return nil, ErrProfileLinkNotPending
+	}
+	if link.InviterUserID == inviteeUserID {
+		return nil, ErrProfileLinkSelf
+	}
+	link.InviteeUserID = &inviteeUserID
+	link.Status = domain.ProfileLinkActive
+	link.AcceptedAt = &acceptedAt
+	for i := range s.profileAliases {
+		alias := &s.profileAliases[i]
+		if alias.LinkID == link.ID && alias.OwnerUserID == link.InviterUserID && alias.TargetUserID == nil {
+			value := inviteeUserID
+			alias.TargetUserID = &value
+		}
+	}
+	inviterID := link.InviterUserID
+	for _, alias := range aliases {
+		s.profileAliases = append(s.profileAliases, fakeProfileAlias{
+			LinkID:       link.ID,
+			OwnerUserID:  inviteeUserID,
+			TargetUserID: &inviterID,
+			Alias:        alias.Alias,
+		})
+	}
+	return cloneProfileLink(link), nil
+}
+
+func (s *fakeStore) LinkedProfiles(_ context.Context, ownerUserID int64) ([]domain.LinkedProfile, error) {
+	result := make([]domain.LinkedProfile, 0)
+	for _, link := range s.linksByToken {
+		if link.Status != domain.ProfileLinkActive || link.InviteeUserID == nil {
+			continue
+		}
+		var targetID int64
+		switch ownerUserID {
+		case link.InviterUserID:
+			targetID = *link.InviteeUserID
+		case *link.InviteeUserID:
+			targetID = link.InviterUserID
+		default:
+			continue
+		}
+		target := s.userByID(targetID)
+		if target == nil {
+			continue
+		}
+		profile := domain.LinkedProfile{
+			LinkID: link.ID,
+			User:   *cloneUser(target),
+		}
+		for _, alias := range s.profileAliases {
+			if alias.LinkID == link.ID && alias.OwnerUserID == ownerUserID && alias.TargetUserID != nil && *alias.TargetUserID == targetID {
+				profile.Aliases = append(profile.Aliases, alias.Alias)
+			}
+		}
+		result = append(result, profile)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LinkID < result[j].LinkID
+	})
+	return result, nil
+}
+
 func (s *fakeStore) CreateTask(_ context.Context, task *domain.Task) error {
 	task.ID = s.nextTaskID
 	s.nextTaskID++
@@ -217,15 +389,10 @@ func (s *fakeStore) TaskByID(_ context.Context, taskID int64) (*domain.Task, err
 
 func (s *fakeStore) TaskRecipient(_ context.Context, taskID int64) (*domain.User, error) {
 	task := s.tasks[taskID]
-	for _, user := range s.usersByTelegram {
-		if task.AssigneeUserID != nil && user.ID == *task.AssigneeUserID {
-			return cloneUser(user), nil
-		}
-		if user.ID == task.CreatorUserID {
-			return cloneUser(user), nil
-		}
+	if task.AssigneeUserID != nil {
+		return cloneUser(s.userByID(*task.AssigneeUserID)), nil
 	}
-	return nil, nil
+	return cloneUser(s.userByID(task.CreatorUserID)), nil
 }
 
 func (s *fakeStore) UpdateTaskStatus(_ context.Context, taskID int64, _ int64, status domain.Status, at time.Time) (*domain.Task, error) {
@@ -313,6 +480,15 @@ func (s *fakeStore) MarkDigestRun(_ context.Context, _ int64, _ time.Time, _ tim
 	return nil
 }
 
+func (s *fakeStore) userByID(userID int64) *domain.User {
+	for _, user := range s.usersByTelegram {
+		if user.ID == userID {
+			return user
+		}
+	}
+	return nil
+}
+
 func cloneTask(task *domain.Task) *domain.Task {
 	if task == nil {
 		return nil
@@ -353,6 +529,26 @@ func cloneTask(task *domain.Task) *domain.Task {
 	return &clone
 }
 
+func cloneProfileLink(link *domain.ProfileLink) *domain.ProfileLink {
+	if link == nil {
+		return nil
+	}
+	clone := *link
+	if link.InviteeUserID != nil {
+		value := *link.InviteeUserID
+		clone.InviteeUserID = &value
+	}
+	if link.AcceptedAt != nil {
+		value := *link.AcceptedAt
+		clone.AcceptedAt = &value
+	}
+	if link.RevokedAt != nil {
+		value := *link.RevokedAt
+		clone.RevokedAt = &value
+	}
+	return &clone
+}
+
 func ptrServiceTime(t time.Time) *time.Time {
 	return &t
 }
@@ -370,6 +566,16 @@ func assertServiceTimePtr(t *testing.T, name string, got *time.Time, want *time.
 	}
 	if !got.Equal(*want) {
 		t.Fatalf("%s = %v, want %v", name, *got, *want)
+	}
+}
+
+func assertAssignee(t *testing.T, task domain.Task, want int64) {
+	t.Helper()
+	if task.AssigneeUserID == nil {
+		t.Fatalf("assignee is nil, want %d", want)
+	}
+	if *task.AssigneeUserID != want {
+		t.Fatalf("assignee = %d, want %d", *task.AssigneeUserID, want)
 	}
 }
 

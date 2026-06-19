@@ -30,6 +30,21 @@ const (
 	RoleGuest  Role = "guest"
 )
 
+type ProfileLinkStatus string
+
+const (
+	ProfileLinkPending ProfileLinkStatus = "pending"
+	ProfileLinkActive  ProfileLinkStatus = "active"
+	ProfileLinkRevoked ProfileLinkStatus = "revoked"
+)
+
+type ProfileLinkAliasSource string
+
+const (
+	ProfileLinkAliasManual    ProfileLinkAliasSource = "manual"
+	ProfileLinkAliasGenerated ProfileLinkAliasSource = "generated"
+)
+
 type RecurrenceRule string
 
 const (
@@ -53,6 +68,40 @@ type Workspace struct {
 	OwnerUserID int64
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type ProfileLink struct {
+	ID            int64
+	InviteToken   string
+	InviterUserID int64
+	InviteeUserID *int64
+	Status        ProfileLinkStatus
+	CreatedAt     time.Time
+	AcceptedAt    *time.Time
+	RevokedAt     *time.Time
+}
+
+type ProfileLinkAliasInput struct {
+	Alias           string
+	NormalizedAlias string
+	Source          ProfileLinkAliasSource
+}
+
+type ProfileLinkAlias struct {
+	ID              int64
+	LinkID          int64
+	OwnerUserID     int64
+	TargetUserID    *int64
+	Alias           string
+	NormalizedAlias string
+	Source          ProfileLinkAliasSource
+	CreatedAt       time.Time
+}
+
+type LinkedProfile struct {
+	LinkID  int64
+	User    User
+	Aliases []string
 }
 
 type Task struct {

@@ -31,6 +31,27 @@ func (s *ObservedStore) EnsurePersonalWorkspace(ctx context.Context, userID int6
 	return result, err
 }
 
+func (s *ObservedStore) CreateProfileLinkInvite(ctx context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	start := time.Now()
+	result, err := s.next.CreateProfileLinkInvite(ctx, inviterUserID, token, aliases)
+	s.observe("create_profile_link_invite", start, err)
+	return result, err
+}
+
+func (s *ObservedStore) AcceptProfileLinkInvite(ctx context.Context, token string, inviteeUserID int64, aliases []domain.ProfileLinkAliasInput, acceptedAt time.Time) (*domain.ProfileLink, error) {
+	start := time.Now()
+	result, err := s.next.AcceptProfileLinkInvite(ctx, token, inviteeUserID, aliases, acceptedAt)
+	s.observe("accept_profile_link_invite", start, err)
+	return result, err
+}
+
+func (s *ObservedStore) LinkedProfiles(ctx context.Context, ownerUserID int64) ([]domain.LinkedProfile, error) {
+	start := time.Now()
+	result, err := s.next.LinkedProfiles(ctx, ownerUserID)
+	s.observe("linked_profiles", start, err)
+	return result, err
+}
+
 func (s *ObservedStore) CreateTask(ctx context.Context, task *domain.Task) error {
 	start := time.Now()
 	err := s.next.CreateTask(ctx, task)

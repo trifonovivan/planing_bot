@@ -2,22 +2,36 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"planing_bot/internal/assignee"
 	"planing_bot/internal/domain"
 	"planing_bot/internal/logging"
 	"planing_bot/internal/metrics"
 	"planing_bot/internal/parser"
 )
 
-var ErrUnknownPostponeOption = errors.New("unknown postpone option")
+var (
+	ErrUnknownPostponeOption = errors.New("unknown postpone option")
+	ErrProfileLinkNotFound   = errors.New("profile link not found")
+	ErrProfileLinkNotPending = errors.New("profile link is not pending")
+	ErrProfileLinkSelf       = errors.New("cannot link profile to itself")
+	ErrProfileAliasesEmpty   = errors.New("profile aliases are empty")
+	ErrAssigneeNotLinked     = errors.New("assignee is not linked")
+)
 
 type Store interface {
 	EnsureUser(ctx context.Context, user domain.TelegramUser, defaultTimezone string) (*domain.User, error)
 	EnsurePersonalWorkspace(ctx context.Context, userID int64) (*domain.Workspace, error)
+	CreateProfileLinkInvite(ctx context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error)
+	AcceptProfileLinkInvite(ctx context.Context, token string, inviteeUserID int64, aliases []domain.ProfileLinkAliasInput, acceptedAt time.Time) (*domain.ProfileLink, error)
+	LinkedProfiles(ctx context.Context, ownerUserID int64) ([]domain.LinkedProfile, error)
 	CreateTask(ctx context.Context, task *domain.Task) error
 	CreateTaskReminder(ctx context.Context, taskID int64, remindAt time.Time) error
 	CreateTaskEvent(ctx context.Context, taskID int64, userID int64, eventType string, payload any) error
@@ -47,8 +61,25 @@ type Service struct {
 type Option func(*Service)
 
 type CreateTaskResult struct {
-	Task  domain.Task
-	Parse parser.ParseResult
+	Task       domain.Task
+	Parse      parser.ParseResult
+	Assignee   domain.User
+	Resolution assignee.Resolution
+}
+
+type ProfileLinkInviteResult struct {
+	Link    domain.ProfileLink
+	Token   string
+	Aliases []string
+}
+
+type AssigneeClarificationError struct {
+	TaskText string
+	Options  []assignee.Option
+}
+
+func (e *AssigneeClarificationError) Error() string {
+	return "task assignee needs clarification"
 }
 
 type ReminderNotification struct {
@@ -106,10 +137,107 @@ func (s *Service) RegisterUser(ctx context.Context, tgUser domain.TelegramUser) 
 	return user, workspace, nil
 }
 
+func (s *Service) CreateProfileLinkInvite(ctx context.Context, tgUser domain.TelegramUser, aliases []string) (*ProfileLinkInviteResult, error) {
+	user, _, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	inputs, expanded := profileAliasInputs(aliases)
+	if len(inputs) == 0 {
+		return nil, ErrProfileAliasesEmpty
+	}
+	token, err := generateInviteToken()
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.store.CreateProfileLinkInvite(ctx, user.ID, token, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("create profile link invite: %w", err)
+	}
+	return &ProfileLinkInviteResult{Link: *link, Token: token, Aliases: expanded}, nil
+}
+
+func (s *Service) AcceptProfileLinkInvite(ctx context.Context, tgUser domain.TelegramUser, token string, aliases []string) (*domain.ProfileLink, error) {
+	user, _, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	inputs, _ := profileAliasInputs(aliases)
+	if len(inputs) == 0 {
+		return nil, ErrProfileAliasesEmpty
+	}
+	link, err := s.store.AcceptProfileLinkInvite(ctx, token, user.ID, inputs, s.now())
+	if err != nil {
+		return nil, fmt.Errorf("accept profile link invite: %w", err)
+	}
+	return link, nil
+}
+
+func (s *Service) LinkedProfiles(ctx context.Context, tgUser domain.TelegramUser) ([]domain.LinkedProfile, error) {
+	user, _, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.LinkedProfiles(ctx, user.ID)
+}
+
 func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.TelegramUser, text string) (*CreateTaskResult, error) {
 	user, workspace, err := s.RegisterUser(ctx, tgUser)
 	if err != nil {
 		return nil, err
+	}
+
+	linkedProfiles, err := s.store.LinkedProfiles(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("linked profiles: %w", err)
+	}
+	resolution := assignee.NewResolver(user.ID, linkedProfileCandidates(linkedProfiles)).Resolve(text)
+	if resolution.NeedsClarification {
+		return nil, &AssigneeClarificationError{
+			TaskText: resolution.TaskText,
+			Options:  resolution.Options,
+		}
+	}
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, resolution.TaskText, resolution)
+}
+
+func (s *Service) CreateTaskForAssignee(ctx context.Context, tgUser domain.TelegramUser, text string, assigneeUserID int64) (*CreateTaskResult, error) {
+	user, workspace, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	if assigneeUserID == 0 {
+		assigneeUserID = user.ID
+	}
+	if assigneeUserID != user.ID {
+		linkedProfiles, err := s.store.LinkedProfiles(ctx, user.ID)
+		if err != nil {
+			return nil, fmt.Errorf("linked profiles: %w", err)
+		}
+		if !isLinkedAssignee(linkedProfiles, assigneeUserID) {
+			return nil, ErrAssigneeNotLinked
+		}
+	}
+	resolution := assignee.Resolution{
+		AssigneeUserID: assigneeUserID,
+		TaskText:       text,
+		Source:         assignee.SourceClarification,
+	}
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, resolution)
+}
+
+func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domain.User, workspace *domain.Workspace, text string, resolution assignee.Resolution) (*CreateTaskResult, error) {
+	assigneeUserID := resolution.AssigneeUserID
+	if assigneeUserID == 0 {
+		assigneeUserID = user.ID
+	}
+	taskWorkspace := workspace
+	if assigneeUserID != user.ID {
+		var err error
+		taskWorkspace, err = s.store.EnsurePersonalWorkspace(ctx, assigneeUserID)
+		if err != nil {
+			return nil, fmt.Errorf("ensure assignee workspace: %w", err)
+		}
 	}
 
 	location := s.locationForUser(user)
@@ -119,7 +247,7 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 	if err != nil {
 		s.logError("parser_failed", err, logging.Fields{
 			"user_id":      user.ID,
-			"workspace_id": workspace.ID,
+			"workspace_id": taskWorkspace.ID,
 			"reason":       parserErrorReason(err),
 		})
 		return nil, err
@@ -129,11 +257,10 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 	if parsed.DueAt != nil {
 		status = domain.StatusPlanned
 	}
-	assigneeID := user.ID
 	task := domain.Task{
-		WorkspaceID:    workspace.ID,
+		WorkspaceID:    taskWorkspace.ID,
 		CreatorUserID:  user.ID,
-		AssigneeUserID: &assigneeID,
+		AssigneeUserID: &assigneeUserID,
 		Title:          parsed.Title,
 		Status:         status,
 		Priority:       parsed.Priority,
@@ -151,16 +278,25 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 		}
 	}
 	if err := s.store.CreateTaskEvent(ctx, task.ID, user.ID, "created", map[string]any{
-		"source":     "text",
-		"confidence": parsed.Confidence,
-		"warnings":   parsed.Warnings,
+		"source":          "text",
+		"confidence":      parsed.Confidence,
+		"warnings":        parsed.Warnings,
+		"assignee_source": resolution.Source,
 	}); err != nil {
 		return nil, fmt.Errorf("create task event: %w", err)
 	}
 	s.incTaskMetric("task_created_total", task, user.ID)
 	s.logInfo("task_created", taskLogFields(task, user.ID))
 
-	return &CreateTaskResult{Task: task, Parse: parsed}, nil
+	assigneeUser := *user
+	if assigneeUserID != user.ID {
+		recipient, err := s.store.TaskRecipient(ctx, task.ID)
+		if err != nil {
+			return nil, fmt.Errorf("task recipient: %w", err)
+		}
+		assigneeUser = *recipient
+	}
+	return &CreateTaskResult{Task: task, Parse: parsed, Assignee: assigneeUser, Resolution: resolution}, nil
 }
 
 func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, taskID int64) (*domain.Task, error) {
@@ -516,4 +652,72 @@ func parserErrorReason(err error) string {
 		return "empty_title"
 	}
 	return "parse_error"
+}
+
+func profileAliasInputs(values []string) ([]domain.ProfileLinkAliasInput, []string) {
+	manual := make(map[string]struct{})
+	for _, value := range values {
+		for _, alias := range strings.Split(value, ",") {
+			normalized := assignee.NormalizeText(alias)
+			if normalized != "" {
+				manual[normalized] = struct{}{}
+			}
+		}
+	}
+	expanded := assignee.NormalizeAliases(values)
+	inputs := make([]domain.ProfileLinkAliasInput, 0, len(expanded))
+	for _, alias := range expanded {
+		source := domain.ProfileLinkAliasGenerated
+		if _, ok := manual[alias]; ok {
+			source = domain.ProfileLinkAliasManual
+		}
+		inputs = append(inputs, domain.ProfileLinkAliasInput{
+			Alias:           alias,
+			NormalizedAlias: alias,
+			Source:          source,
+		})
+	}
+	return inputs, expanded
+}
+
+func linkedProfileCandidates(profiles []domain.LinkedProfile) []assignee.Candidate {
+	candidates := make([]assignee.Candidate, 0, len(profiles))
+	for _, profile := range profiles {
+		candidates = append(candidates, assignee.Candidate{
+			UserID:  profile.User.ID,
+			Name:    displayUserName(profile.User),
+			Aliases: profile.Aliases,
+		})
+	}
+	return candidates
+}
+
+func isLinkedAssignee(profiles []domain.LinkedProfile, userID int64) bool {
+	for _, profile := range profiles {
+		if profile.User.ID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func displayUserName(user domain.User) string {
+	switch {
+	case user.FirstName != "" && user.LastName != "":
+		return user.FirstName + " " + user.LastName
+	case user.FirstName != "":
+		return user.FirstName
+	case user.Username != "":
+		return user.Username
+	default:
+		return fmt.Sprintf("user-%d", user.ID)
+	}
+}
+
+func generateInviteToken() (string, error) {
+	var data [18]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data[:]), nil
 }
