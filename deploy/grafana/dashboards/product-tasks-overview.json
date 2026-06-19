@@ -25,7 +25,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Active tasks",
+      "title": "Активные задачи",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -79,13 +79,14 @@
           },
           "expr": "sum(tasks_active_total)",
           "refId": "A",
-          "legendFormat": "active"
+          "legendFormat": "Активные"
         }
-      ]
+      ],
+      "description": "Текущее количество незавершенных задач в статусах new, planned и postponed. Метрика: tasks_active_total."
     },
     {
       "id": 2,
-      "title": "Due today",
+      "title": "Задачи на сегодня",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -139,13 +140,14 @@
           },
           "expr": "sum(tasks_due_today_total)",
           "refId": "A",
-          "legendFormat": "due today"
+          "legendFormat": "На сегодня"
         }
-      ]
+      ],
+      "description": "Сколько активных задач имеют due_at в пределах текущего дня. Метрика: tasks_due_today_total."
     },
     {
       "id": 3,
-      "title": "Overdue",
+      "title": "Просроченные задачи",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -207,13 +209,14 @@
           },
           "expr": "sum(tasks_overdue_total)",
           "refId": "A",
-          "legendFormat": "overdue"
+          "legendFormat": "Просрочены"
         }
-      ]
+      ],
+      "description": "Сколько активных задач имеют due_at в прошлом. Метрика: tasks_overdue_total."
     },
     {
       "id": 4,
-      "title": "Pending reminders",
+      "title": "Ожидающие напоминания",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -267,13 +270,14 @@
           },
           "expr": "reminders_pending_total",
           "refId": "A",
-          "legendFormat": "pending"
+          "legendFormat": "Ожидают"
         }
-      ]
+      ],
+      "description": "Сколько напоминаний еще не отправлено. Метрика: reminders_pending_total."
     },
     {
       "id": 5,
-      "title": "Created, 24h",
+      "title": "Создано за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -327,13 +331,14 @@
           },
           "expr": "sum(increase(task_created_total[24h]))",
           "refId": "A",
-          "legendFormat": "created"
+          "legendFormat": "Создано"
         }
-      ]
+      ],
+      "description": "Количество задач, созданных за последние 24 часа. Метрика: increase(task_created_total[24h])."
     },
     {
       "id": 6,
-      "title": "Done, 24h",
+      "title": "Выполнено за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -387,13 +392,14 @@
           },
           "expr": "sum(increase(task_done_total[24h]))",
           "refId": "A",
-          "legendFormat": "done"
+          "legendFormat": "Выполнено"
         }
-      ]
+      ],
+      "description": "Количество задач, закрытых как выполненные за последние 24 часа. Метрика: increase(task_done_total[24h])."
     },
     {
       "id": 7,
-      "title": "Postponed, 24h",
+      "title": "Перенесено за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -447,13 +453,14 @@
           },
           "expr": "sum(increase(task_postponed_total[24h]))",
           "refId": "A",
-          "legendFormat": "postponed"
+          "legendFormat": "Перенесено"
         }
-      ]
+      ],
+      "description": "Количество задач, перенесенных на другое время за последние 24 часа. Метрика: increase(task_postponed_total[24h])."
     },
     {
       "id": 8,
-      "title": "Cancelled, 24h",
+      "title": "Отменено за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -507,13 +514,14 @@
           },
           "expr": "sum(increase(task_cancelled_total[24h]))",
           "refId": "A",
-          "legendFormat": "cancelled"
+          "legendFormat": "Отменено"
         }
-      ]
+      ],
+      "description": "Количество задач, отмененных за последние 24 часа. Метрика: increase(task_cancelled_total[24h])."
     },
     {
       "id": 9,
-      "title": "Task lifecycle rate",
+      "title": "Динамика жизненного цикла задач",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -567,7 +575,7 @@
           },
           "expr": "sum(rate(task_created_total[5m]))",
           "refId": "A",
-          "legendFormat": "created"
+          "legendFormat": "Создано"
         },
         {
           "datasource": {
@@ -576,7 +584,7 @@
           },
           "expr": "sum(rate(task_done_total[5m]))",
           "refId": "B",
-          "legendFormat": "done"
+          "legendFormat": "Выполнено"
         },
         {
           "datasource": {
@@ -585,7 +593,7 @@
           },
           "expr": "sum(rate(task_postponed_total[5m]))",
           "refId": "C",
-          "legendFormat": "postponed"
+          "legendFormat": "Перенесено"
         },
         {
           "datasource": {
@@ -594,13 +602,14 @@
           },
           "expr": "sum(rate(task_cancelled_total[5m]))",
           "refId": "D",
-          "legendFormat": "cancelled"
+          "legendFormat": "Отменено"
         }
-      ]
+      ],
+      "description": "Скорость создания, выполнения, переноса и отмены задач за 5 минут. Помогает видеть текущую активность пользователей."
     },
     {
       "id": 10,
-      "title": "Task gauges by workspace",
+      "title": "Состояние задач по workspace",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -653,7 +662,7 @@
           },
           "expr": "sum by (workspace_id) (tasks_active_total)",
           "refId": "A",
-          "legendFormat": "active workspace {{workspace_id}}"
+          "legendFormat": "Активные workspace {{workspace_id}}"
         },
         {
           "datasource": {
@@ -662,7 +671,7 @@
           },
           "expr": "sum by (workspace_id) (tasks_due_today_total)",
           "refId": "B",
-          "legendFormat": "due today workspace {{workspace_id}}"
+          "legendFormat": "На сегодня workspace {{workspace_id}}"
         },
         {
           "datasource": {
@@ -671,13 +680,14 @@
           },
           "expr": "sum by (workspace_id) (tasks_overdue_total)",
           "refId": "C",
-          "legendFormat": "overdue workspace {{workspace_id}}"
+          "legendFormat": "Просрочены workspace {{workspace_id}}"
         }
-      ]
+      ],
+      "description": "Активные, сегодняшние и просроченные задачи в разрезе workspace_id. Помогает найти workspace с накопившимися задачами."
     },
     {
       "id": 11,
-      "title": "Created by priority",
+      "title": "Создания по приоритету",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -731,13 +741,14 @@
           },
           "expr": "sum by (priority) (rate(task_created_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{priority}}"
+          "legendFormat": "Приоритет {{priority}}"
         }
-      ]
+      ],
+      "description": "Скорость создания задач в разрезе priority. Метрика: task_created_total{priority=...}."
     },
     {
       "id": 12,
-      "title": "Created by category",
+      "title": "Создания по категории",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -791,13 +802,14 @@
           },
           "expr": "sum by (category) (rate(task_created_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{category}}"
+          "legendFormat": "Категория {{category}}"
         }
-      ]
+      ],
+      "description": "Скорость создания задач в разрезе category. Категория берется из распарсенного текста задачи."
     },
     {
       "id": 13,
-      "title": "Done by priority",
+      "title": "Выполнения по приоритету",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -851,13 +863,14 @@
           },
           "expr": "sum by (priority) (rate(task_done_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{priority}}"
+          "legendFormat": "Приоритет {{priority}}"
         }
-      ]
+      ],
+      "description": "Скорость выполнения задач в разрезе priority. Метрика: task_done_total{priority=...}."
     },
     {
       "id": 14,
-      "title": "Postponed and cancelled by priority",
+      "title": "Переносы и отмены по приоритету",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -911,7 +924,7 @@
           },
           "expr": "sum by (priority) (rate(task_postponed_total[5m]))",
           "refId": "A",
-          "legendFormat": "postponed {{priority}}"
+          "legendFormat": "Перенесено {{priority}}"
         },
         {
           "datasource": {
@@ -920,13 +933,14 @@
           },
           "expr": "sum by (priority) (rate(task_cancelled_total[5m]))",
           "refId": "B",
-          "legendFormat": "cancelled {{priority}}"
+          "legendFormat": "Отменено {{priority}}"
         }
-      ]
+      ],
+      "description": "Скорость переносов и отмен задач в разрезе priority. Показывает, какие задачи чаще не завершаются сразу."
     },
     {
       "id": 15,
-      "title": "Completion ratio, 24h",
+      "title": "Доля выполнения за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -989,13 +1003,14 @@
           },
           "expr": "sum(increase(task_done_total[24h])) / clamp_min(sum(increase(task_created_total[24h])), 1) * 100",
           "refId": "A",
-          "legendFormat": "done / created"
+          "legendFormat": "Выполнено / создано"
         }
-      ]
+      ],
+      "description": "Отношение выполненных задач к созданным за последние 24 часа: done / created * 100%."
     },
     {
       "id": 16,
-      "title": "Overdue share",
+      "title": "Доля просроченных",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -1058,9 +1073,10 @@
           },
           "expr": "sum(tasks_overdue_total) / clamp_min(sum(tasks_active_total), 1) * 100",
           "refId": "A",
-          "legendFormat": "overdue / active"
+          "legendFormat": "Просрочено / активно"
         }
-      ]
+      ],
+      "description": "Отношение просроченных задач к активным: overdue / active * 100%. Чем выше значение, тем хуже пользователь успевает закрывать задачи."
     }
   ],
   "refresh": "10s",
@@ -1082,8 +1098,9 @@
   "timepicker": {
   },
   "timezone": "browser",
-  "title": "Product Tasks Overview",
+  "title": "Продукт: задачи",
   "uid": "product-tasks-overview",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Продуктовые метрики задач: сколько задач создают, выполняют, переносят, отменяют, сколько задач активны, просрочены или запланированы на сегодня."
 }

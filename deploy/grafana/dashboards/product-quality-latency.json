@@ -25,7 +25,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Parser success, 24h",
+      "title": "Успешный парсинг за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -79,13 +79,14 @@
           },
           "expr": "sum(increase(parser_success_total[24h]))",
           "refId": "A",
-          "legendFormat": "success"
+          "legendFormat": "Успешно"
         }
-      ]
+      ],
+      "description": "Количество сообщений, которые parser успешно превратил в задачу за последние 24 часа. Метрика: increase(parser_success_total[24h])."
     },
     {
       "id": 2,
-      "title": "Parser errors, 24h",
+      "title": "Ошибки парсинга за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -147,13 +148,14 @@
           },
           "expr": "sum(increase(parser_error_total[24h]))",
           "refId": "A",
-          "legendFormat": "errors"
+          "legendFormat": "Ошибки"
         }
-      ]
+      ],
+      "description": "Количество сообщений, которые parser не смог разобрать за последние 24 часа. Метрика: increase(parser_error_total[24h])."
     },
     {
       "id": 3,
-      "title": "Parser success ratio, 24h",
+      "title": "Успешность парсинга за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -216,13 +218,14 @@
           },
           "expr": "sum(increase(parser_success_total[24h])) / clamp_min(sum(increase(parser_success_total[24h])) + sum(increase(parser_error_total[24h])), 1) * 100",
           "refId": "A",
-          "legendFormat": "success ratio"
+          "legendFormat": "Успешность"
         }
-      ]
+      ],
+      "description": "Доля успешных разборов: parser_success / (parser_success + parser_error) * 100%."
     },
     {
       "id": 4,
-      "title": "Storage errors, 24h",
+      "title": "Ошибки хранилища за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -284,13 +287,14 @@
           },
           "expr": "sum(increase(storage_error_total[24h]))",
           "refId": "A",
-          "legendFormat": "storage errors"
+          "legendFormat": "Ошибки хранилища"
         }
-      ]
+      ],
+      "description": "Количество ошибок операций с БД/хранилищем за последние 24 часа. Метрика: increase(storage_error_total[24h])."
     },
     {
       "id": 5,
-      "title": "Parser p95 latency",
+      "title": "p95 парсинга",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -355,11 +359,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени разбора пользовательского текста parser. Метрика: parser_duration_seconds."
     },
     {
       "id": 6,
-      "title": "Storage p95 latency",
+      "title": "p95 запросов к хранилищу",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -424,11 +429,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени операций storage layer. Метрика: storage_query_duration_seconds."
     },
     {
       "id": 7,
-      "title": "Telegram p95 latency",
+      "title": "p95 обработки Telegram",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -493,11 +499,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени обработки входящего Telegram update. Метрика: telegram_update_duration_seconds."
     },
     {
       "id": 8,
-      "title": "Scheduler p95 latency",
+      "title": "p95 планировщика",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -562,11 +569,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени scheduler iteration. Метрика: scheduler_iteration_duration_seconds."
     },
     {
       "id": 9,
-      "title": "Parser success and error rate",
+      "title": "Успехи и ошибки парсинга",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -620,7 +628,7 @@
           },
           "expr": "sum(rate(parser_success_total[5m]))",
           "refId": "A",
-          "legendFormat": "success"
+          "legendFormat": "Успешно"
         },
         {
           "datasource": {
@@ -629,13 +637,14 @@
           },
           "expr": "sum(rate(parser_error_total[5m]))",
           "refId": "B",
-          "legendFormat": "errors"
+          "legendFormat": "Ошибки"
         }
-      ]
+      ],
+      "description": "Скорость успешного и неуспешного парсинга за 5 минут. Метрики: parser_success_total, parser_error_total."
     },
     {
       "id": 10,
-      "title": "Parser errors by reason",
+      "title": "Ошибки парсинга по причине",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -689,13 +698,14 @@
           },
           "expr": "sum by (reason) (rate(parser_error_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{reason}}"
+          "legendFormat": "Причина {{reason}}"
         }
-      ]
+      ],
+      "description": "Скорость ошибок parser в разрезе reason. Помогает понять, какие формулировки пользователи чаще вводят некорректно."
     },
     {
       "id": 11,
-      "title": "Parser latency",
+      "title": "Задержка парсинга",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -769,11 +779,12 @@
           "refId": "C",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "description": "p50, p95 и p99 времени parser. Рост p95/p99 означает, что обработка пользовательского текста замедляется."
     },
     {
       "id": 12,
-      "title": "Storage query latency by operation",
+      "title": "Задержка хранилища по операции",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -829,11 +840,12 @@
           "refId": "A",
           "legendFormat": "p95 {{operation}}"
         }
-      ]
+      ],
+      "description": "p95 времени storage operations в разрезе operation. Помогает найти медленные запросы к БД."
     },
     {
       "id": 13,
-      "title": "Storage query rate by operation",
+      "title": "Частота запросов к хранилищу",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -887,13 +899,14 @@
           },
           "expr": "sum by (operation) (rate(storage_query_duration_seconds_count[5m]))",
           "refId": "A",
-          "legendFormat": "{{operation}}"
+          "legendFormat": "Операция {{operation}}"
         }
-      ]
+      ],
+      "description": "Скорость storage operations в разрезе operation. Метрика: rate(storage_query_duration_seconds_count[5m])."
     },
     {
       "id": 14,
-      "title": "Storage errors by operation",
+      "title": "Ошибки хранилища по операции",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -947,13 +960,14 @@
           },
           "expr": "sum by (operation) (rate(storage_error_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{operation}}"
+          "legendFormat": "Операция {{operation}}"
         }
-      ]
+      ],
+      "description": "Скорость storage errors в разрезе operation. Метрика: storage_error_total{operation=...}."
     },
     {
       "id": 15,
-      "title": "Scheduler iteration latency",
+      "title": "Задержка итерации планировщика",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1027,11 +1041,12 @@
           "refId": "C",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "description": "p50, p95 и p99 времени scheduler iteration. Влияет на своевременность reminders и digests."
     },
     {
       "id": 16,
-      "title": "Telegram send errors by operation",
+      "title": "Ошибки отправки Telegram по операции",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1085,9 +1100,10 @@
           },
           "expr": "sum by (operation) (rate(telegram_send_error_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{operation}}"
+          "legendFormat": "Операция {{operation}}"
         }
-      ]
+      ],
+      "description": "Скорость ошибок отправки сообщений в Telegram в разрезе operation. Метрика: telegram_send_error_total{operation=...}."
     }
   ],
   "refresh": "10s",
@@ -1110,8 +1126,9 @@
   "timepicker": {
   },
   "timezone": "browser",
-  "title": "Product Quality and Latency",
+  "title": "Продукт: качество и задержки",
   "uid": "product-quality-latency",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Метрики качества работы бота: успешность парсинга, ошибки, задержки парсера, хранилища, Telegram обработки и scheduler."
 }

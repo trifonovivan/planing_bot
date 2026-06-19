@@ -25,7 +25,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Telegram updates, 5m rate",
+      "title": "Входящие Telegram-события, 5 минут",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -80,13 +80,14 @@
           },
           "expr": "sum(rate(telegram_update_total[5m]))",
           "refId": "A",
-          "legendFormat": "updates"
+          "legendFormat": "События"
         }
-      ]
+      ],
+      "description": "Скорость входящих Telegram update за последние 5 минут. Метрика: rate(telegram_update_total[5m])."
     },
     {
       "id": 2,
-      "title": "Callbacks, 5m rate",
+      "title": "Callback-действия, 5 минут",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -141,13 +142,14 @@
           },
           "expr": "sum(rate(telegram_callback_total[5m]))",
           "refId": "A",
-          "legendFormat": "callbacks"
+          "legendFormat": "Callback"
         }
-      ]
+      ],
+      "description": "Скорость нажатий на inline-кнопки Telegram. Метрика: rate(telegram_callback_total[5m])."
     },
     {
       "id": 3,
-      "title": "Reminders sent, 24h",
+      "title": "Напоминания за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -201,13 +203,14 @@
           },
           "expr": "sum(increase(reminder_sent_total[24h]))",
           "refId": "A",
-          "legendFormat": "reminders"
+          "legendFormat": "Напоминания"
         }
-      ]
+      ],
+      "description": "Количество отправленных task reminders за последние 24 часа. Метрика: increase(reminder_sent_total[24h])."
     },
     {
       "id": 4,
-      "title": "Digests sent, 24h",
+      "title": "Дайджесты за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -261,13 +264,14 @@
           },
           "expr": "sum(increase(digest_sent_total[24h]))",
           "refId": "A",
-          "legendFormat": "digests"
+          "legendFormat": "Дайджесты"
         }
-      ]
+      ],
+      "description": "Количество отправленных утренних digest-сообщений за последние 24 часа. Метрика: increase(digest_sent_total[24h])."
     },
     {
       "id": 5,
-      "title": "Telegram send errors, 24h",
+      "title": "Ошибки отправки Telegram за 24 часа",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -329,13 +333,14 @@
           },
           "expr": "sum(increase(telegram_send_error_total[24h]))",
           "refId": "A",
-          "legendFormat": "errors"
+          "legendFormat": "Ошибки"
         }
-      ]
+      ],
+      "description": "Количество ошибок при отправке сообщений в Telegram за 24 часа. Метрика: increase(telegram_send_error_total[24h])."
     },
     {
       "id": 6,
-      "title": "Update p95 latency",
+      "title": "p95 обработки Telegram",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -400,11 +405,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени обработки одного Telegram update. Метрика: telegram_update_duration_seconds."
     },
     {
       "id": 7,
-      "title": "Scheduler p95 latency",
+      "title": "p95 итерации планировщика",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -469,11 +475,12 @@
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "95-й перцентиль времени одной итерации scheduler, который отправляет reminders/digests. Метрика: scheduler_iteration_duration_seconds."
     },
     {
       "id": 8,
-      "title": "Pending reminders",
+      "title": "Ожидающие напоминания",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -527,13 +534,14 @@
           },
           "expr": "reminders_pending_total",
           "refId": "A",
-          "legendFormat": "pending"
+          "legendFormat": "Ожидают"
         }
-      ]
+      ],
+      "description": "Текущее количество неотправленных reminders. Метрика: reminders_pending_total."
     },
     {
       "id": 9,
-      "title": "Telegram updates by type",
+      "title": "Входящие события по типу",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -587,13 +595,14 @@
           },
           "expr": "sum by (type) (rate(telegram_update_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{type}}"
+          "legendFormat": "Тип {{type}}"
         }
-      ]
+      ],
+      "description": "Скорость Telegram update в разрезе типа: message, callback и другие. Метрика: telegram_update_total{type=...}."
     },
     {
       "id": 10,
-      "title": "Telegram callbacks by action",
+      "title": "Callback по действию",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -647,13 +656,14 @@
           },
           "expr": "sum by (action) (rate(telegram_callback_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{action}}"
+          "legendFormat": "Действие {{action}}"
         }
-      ]
+      ],
+      "description": "Скорость callback-действий в разрезе action: done, postpone, cancel и другие. Метрика: telegram_callback_total{action=...}."
     },
     {
       "id": 11,
-      "title": "Telegram update latency",
+      "title": "Задержка обработки Telegram",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -727,11 +737,12 @@
           "refId": "C",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "description": "p50, p95 и p99 времени обработки Telegram update. Помогает видеть деградацию пользовательского ответа."
     },
     {
       "id": 12,
-      "title": "Reminders and digests sent",
+      "title": "Отправка напоминаний и дайджестов",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -785,7 +796,7 @@
           },
           "expr": "sum(rate(reminder_sent_total[5m]))",
           "refId": "A",
-          "legendFormat": "reminders"
+          "legendFormat": "Напоминания"
         },
         {
           "datasource": {
@@ -794,13 +805,14 @@
           },
           "expr": "sum(rate(digest_sent_total[5m]))",
           "refId": "B",
-          "legendFormat": "digests"
+          "legendFormat": "Дайджесты"
         }
-      ]
+      ],
+      "description": "Скорость отправки reminders и daily digest. Метрики: reminder_sent_total, digest_sent_total."
     },
     {
       "id": 13,
-      "title": "Reminders by workspace",
+      "title": "Напоминания по workspace",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -854,13 +866,14 @@
           },
           "expr": "sum by (workspace_id) (rate(reminder_sent_total[5m]))",
           "refId": "A",
-          "legendFormat": "workspace {{workspace_id}}"
+          "legendFormat": "Workspace {{workspace_id}}"
         }
-      ]
+      ],
+      "description": "Скорость отправки reminders в разрезе workspace_id. Метрика: reminder_sent_total{workspace_id=...}."
     },
     {
       "id": 14,
-      "title": "Telegram send errors by operation",
+      "title": "Ошибки отправки по операции",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -914,13 +927,14 @@
           },
           "expr": "sum by (operation) (rate(telegram_send_error_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{operation}}"
+          "legendFormat": "Операция {{operation}}"
         }
-      ]
+      ],
+      "description": "Скорость ошибок отправки Telegram в разрезе operation. Метрика: telegram_send_error_total{operation=...}."
     },
     {
       "id": 15,
-      "title": "Scheduler iteration latency",
+      "title": "Задержка итерации планировщика",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -994,7 +1008,8 @@
           "refId": "C",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "description": "p50, p95 и p99 времени scheduler iteration. Рост может означать проблемы с БД или отправкой сообщений."
     }
   ],
   "refresh": "10s",
@@ -1017,8 +1032,9 @@
   "timepicker": {
   },
   "timezone": "browser",
-  "title": "Product Delivery and Telegram",
+  "title": "Продукт: доставка и Telegram",
   "uid": "product-delivery-telegram",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Метрики доставки пользовательских сообщений: входящие Telegram события, callback-действия, отправленные напоминания, дайджесты и ошибки отправки."
 }

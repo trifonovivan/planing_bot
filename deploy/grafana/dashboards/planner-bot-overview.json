@@ -18,7 +18,9 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "links": [],
+  "links": [
+
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -28,7 +30,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -43,7 +47,9 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 4,
@@ -74,12 +80,13 @@
             "uid": "prometheus"
           },
           "expr": "up{job=\"planner-bot\"}",
-          "legendFormat": "up",
+          "legendFormat": "Доступность",
           "refId": "A"
         }
       ],
-      "title": "Planner bot up",
-      "type": "stat"
+      "title": "Бот доступен",
+      "type": "stat",
+      "description": "Показывает, видит ли Prometheus приложение planner-bot. Значение 1 означает, что endpoint /metrics успешно скрейпится."
     },
     {
       "datasource": {
@@ -88,7 +95,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -99,7 +108,9 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 4,
@@ -130,12 +141,13 @@
             "uid": "prometheus"
           },
           "expr": "sum(tasks_active_total)",
-          "legendFormat": "active",
+          "legendFormat": "Активные",
           "refId": "A"
         }
       ],
-      "title": "Active tasks",
-      "type": "stat"
+      "title": "Активные задачи",
+      "type": "stat",
+      "description": "Текущее количество незавершенных задач в статусах new, planned и postponed. Метрика: tasks_active_total."
     },
     {
       "datasource": {
@@ -144,7 +156,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -155,7 +169,9 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 4,
@@ -186,12 +202,13 @@
             "uid": "prometheus"
           },
           "expr": "reminders_pending_total",
-          "legendFormat": "pending",
+          "legendFormat": "Ожидают",
           "refId": "A"
         }
       ],
-      "title": "Pending reminders",
-      "type": "stat"
+      "title": "Ожидающие напоминания",
+      "type": "stat",
+      "description": "Сколько напоминаний еще не отправлено пользователям. Метрика: reminders_pending_total."
     },
     {
       "datasource": {
@@ -200,7 +217,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -212,7 +231,9 @@
           },
           "unit": "reqps"
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -223,7 +244,9 @@
       "id": 4,
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -240,12 +263,13 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(telegram_update_total[5m])) by (type)",
-          "legendFormat": "{{type}}",
+          "legendFormat": "Тип {{type}}",
           "refId": "A"
         }
       ],
-      "title": "Telegram updates",
-      "type": "timeseries"
+      "title": "Входящие Telegram-события",
+      "type": "timeseries",
+      "description": "Скорость обработки входящих Telegram update по типам. Метрика: telegram_update_total."
     },
     {
       "datasource": {
@@ -254,7 +278,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -266,7 +292,9 @@
           },
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -277,7 +305,9 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -294,7 +324,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(task_created_total[5m]))",
-          "legendFormat": "created",
+          "legendFormat": "Создано",
           "refId": "A"
         },
         {
@@ -303,7 +333,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(task_done_total[5m]))",
-          "legendFormat": "done",
+          "legendFormat": "Выполнено",
           "refId": "B"
         },
         {
@@ -312,12 +342,13 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(task_cancelled_total[5m]))",
-          "legendFormat": "cancelled",
+          "legendFormat": "Отменено",
           "refId": "C"
         }
       ],
-      "title": "Task events",
-      "type": "timeseries"
+      "title": "События по задачам",
+      "type": "timeseries",
+      "description": "Скорость создания, выполнения, переноса и отмены задач. Метрики: task_created_total, task_done_total, task_postponed_total, task_cancelled_total."
     },
     {
       "datasource": {
@@ -326,7 +357,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "mappings": [
+
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -342,7 +375,9 @@
           },
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -353,7 +388,9 @@
       "id": 6,
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -370,7 +407,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(parser_error_total[5m])) by (reason)",
-          "legendFormat": "parser {{reason}}",
+          "legendFormat": "Парсер: {{reason}}",
           "refId": "A"
         },
         {
@@ -379,7 +416,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(storage_error_total[5m])) by (operation)",
-          "legendFormat": "storage {{operation}}",
+          "legendFormat": "Хранилище: {{operation}}",
           "refId": "B"
         },
         {
@@ -388,12 +425,13 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(telegram_send_error_total[5m])) by (operation)",
-          "legendFormat": "telegram {{operation}}",
+          "legendFormat": "Telegram: {{operation}}",
           "refId": "C"
         }
       ],
-      "title": "Errors",
-      "type": "timeseries"
+      "title": "Ошибки",
+      "type": "timeseries",
+      "description": "Скорость ошибок парсинга, хранилища и отправки сообщений в Telegram. Метрики: parser_error_total, storage_error_total, telegram_send_error_total."
     },
     {
       "datasource": {
@@ -427,8 +465,9 @@
           "refId": "A"
         }
       ],
-      "title": "Recent app logs",
-      "type": "logs"
+      "title": "Свежие логи приложения",
+      "type": "logs",
+      "description": "Последние JSON-логи app-контейнера из Loki. Помогает быстро понять, какие события происходили в боте."
     }
   ],
   "refresh": "10s",
@@ -437,16 +476,20 @@
     "planner-bot"
   ],
   "templating": {
-    "list": []
+    "list": [
+
+    ]
   },
   "time": {
     "from": "now-6h",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+  },
   "timezone": "browser",
-  "title": "Planner Bot Overview",
+  "title": "Обзор Planner Bot",
   "uid": "planner-bot-overview",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Короткий обзор состояния бота: доступность, задачи, напоминания, ошибки и свежие логи приложения."
 }

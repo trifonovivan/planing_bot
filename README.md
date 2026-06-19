@@ -201,11 +201,11 @@ GET /prometheus/
 
 В Grafana автоматически provisionятся два dashboard:
 
-- `Planner Bot Overview`
+- `Обзор Planner Bot`
 - `Infrastructure Overview`
-- `Product Tasks Overview`
-- `Product Delivery and Telegram`
-- `Product Quality and Latency`
+- `Продукт: задачи`
+- `Продукт: доставка и Telegram`
+- `Продукт: качество и задержки`
 
 `/metrics` и `/prometheus/` закрыты nginx basic auth через `MONITORING_HTPASSWD`, чтобы сырые метрики и Prometheus UI не были публичными.
 
