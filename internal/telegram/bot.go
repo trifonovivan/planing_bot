@@ -38,9 +38,12 @@ type Bot struct {
 type Option func(*Bot)
 
 type pendingClarification struct {
-	Text      string
-	Options   []assignee.Option
-	CreatedAt time.Time
+	Kind           string
+	Text           string
+	AssigneeUserID int64
+	Options        []assignee.Option
+	Decision       service.ParseValidationDecision
+	CreatedAt      time.Time
 }
 
 const botUsernameResolveTimeout = 2 * time.Second
@@ -222,20 +225,37 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 			return b.sendMessage(ctx, message.Chat.ID, b.formatInvite(ctx, result), nil)
 		}
 		if pending, ok := b.pendingClarification(user.TelegramID); ok {
+			if pending.Kind == "parse" {
+				return b.handleParseClarificationText(ctx, message, user, text, pending)
+			}
 			return b.handleAssigneeClarification(ctx, message, user, text, pending)
 		}
 		result, err := b.service.CreateTaskFromText(ctx, user, text)
-		if errors.Is(err, parser.ErrEmptyTitle) {
-			return b.sendMessage(ctx, message.Chat.ID, "Не понял задачу. Напиши чуть подробнее, что нужно сделать.", nil)
-		}
 		var clarification *service.AssigneeClarificationError
 		if errors.As(err, &clarification) {
 			b.rememberClarification(user.TelegramID, pendingClarification{
+				Kind:      "assignee",
 				Text:      clarification.TaskText,
 				Options:   clarification.Options,
 				CreatedAt: time.Now(),
 			})
 			return b.sendMessage(ctx, message.Chat.ID, formatAssigneeClarification(clarification), nil)
+		}
+		if parseClarification := new(service.ParseClarificationError); errors.As(err, &parseClarification) {
+			b.rememberClarification(user.TelegramID, pendingClarification{
+				Kind:           "parse",
+				Text:           parseClarification.TaskText,
+				AssigneeUserID: parseClarification.AssigneeUserID,
+				Decision:       parseClarification.Decision,
+				CreatedAt:      time.Now(),
+			})
+			return b.sendMessage(ctx, message.Chat.ID, formatParseClarification(parseClarification.Decision), parseClarificationKeyboard(parseClarification.Decision))
+		}
+		if rejected := new(service.ParseRejectedError); errors.As(err, &rejected) {
+			return b.sendMessage(ctx, message.Chat.ID, parseDecisionMessage(rejected.Decision), nil)
+		}
+		if errors.Is(err, parser.ErrEmptyTitle) {
+			return b.sendMessage(ctx, message.Chat.ID, "Не понял задачу. Напиши чуть подробнее, что нужно сделать.", nil)
 		}
 		if err != nil {
 			return err
@@ -264,16 +284,50 @@ func (b *Bot) handleAssigneeClarification(ctx context.Context, message message, 
 	return b.sendCreatedTaskMessages(ctx, message.Chat.ID, result)
 }
 
+func (b *Bot) handleParseClarificationText(ctx context.Context, message message, user domain.TelegramUser, text string, pending pendingClarification) error {
+	if isCancelText(text) {
+		b.forgetClarification(user.TelegramID)
+		return b.sendMessage(ctx, message.Chat.ID, "Ок, не создаю задачу.", nil)
+	}
+	switch normalizeClarificationText(text) {
+	case "create_without_due":
+		return b.applyParseClarification(ctx, message.Chat.ID, user, pending, service.ParseActionCreateWithoutDue)
+	case "remove_reminder":
+		return b.applyParseClarification(ctx, message.Chat.ID, user, pending, service.ParseActionRemoveReminder)
+	default:
+		return b.sendMessage(ctx, message.Chat.ID, "Напиши дату текстом или выбери действие кнопкой.", parseClarificationKeyboard(pending.Decision))
+	}
+}
+
 func (b *Bot) handleCallback(ctx context.Context, callback callbackQuery) error {
 	parts := strings.Split(callback.Data, ":")
 	if len(parts) < 2 {
 		return b.answerCallback(ctx, callback.ID, "Не понял действие")
 	}
+	user := telegramUser(callback.From)
+	if parts[0] == "clarify" {
+		pending, ok := b.pendingClarification(user.TelegramID)
+		if !ok || pending.Kind != "parse" {
+			return b.answerCallback(ctx, callback.ID, "Нет ожидающего уточнения")
+		}
+		var action service.ParseClarificationAction
+		switch parts[1] {
+		case "no_due":
+			action = service.ParseActionCreateWithoutDue
+		case "no_reminder":
+			action = service.ParseActionRemoveReminder
+		default:
+			return b.answerCallback(ctx, callback.ID, "Не понял уточнение")
+		}
+		if err := b.answerCallback(ctx, callback.ID, "Ок"); err != nil {
+			return err
+		}
+		return b.applyParseClarification(ctx, callback.Message.Chat.ID, user, pending, action)
+	}
 	taskID, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return b.answerCallback(ctx, callback.ID, "Не понял задачу")
 	}
-	user := telegramUser(callback.From)
 
 	switch parts[0] {
 	case "done":
@@ -334,6 +388,25 @@ func (b *Bot) handleCallback(ctx context.Context, callback callbackQuery) error 
 	default:
 		return b.answerCallback(ctx, callback.ID, "Неизвестное действие")
 	}
+}
+
+func (b *Bot) applyParseClarification(ctx context.Context, chatID int64, user domain.TelegramUser, pending pendingClarification, action service.ParseClarificationAction) error {
+	result, err := b.service.CreateTaskFromParseClarification(ctx, user, pending.Text, pending.AssigneeUserID, action)
+	if parseClarification := new(service.ParseClarificationError); errors.As(err, &parseClarification) {
+		return b.sendMessage(ctx, chatID, formatParseClarification(parseClarification.Decision), parseClarificationKeyboard(parseClarification.Decision))
+	}
+	if rejected := new(service.ParseRejectedError); errors.As(err, &rejected) {
+		b.forgetClarification(user.TelegramID)
+		return b.sendMessage(ctx, chatID, parseDecisionMessage(rejected.Decision), nil)
+	}
+	if errors.Is(err, parser.ErrEmptyTitle) {
+		return b.sendMessage(ctx, chatID, "Не понял задачу. Напиши чуть подробнее, что нужно сделать.", nil)
+	}
+	if err != nil {
+		return err
+	}
+	b.forgetClarification(user.TelegramID)
+	return b.sendCreatedTaskMessages(ctx, chatID, result)
 }
 
 func (b *Bot) rememberPendingInvite(telegramID int64, token string) {
@@ -697,6 +770,61 @@ func formatAssigneeOptions(options []assignee.Option) string {
 		lines = append(lines, "- "+option.Label)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatParseClarification(decision service.ParseValidationDecision) string {
+	message := parseDecisionMessage(decision)
+	if len(decision.Actions) == 0 {
+		return message
+	}
+	return message + "\n\nМожно ответить текстом или выбрать действие кнопкой."
+}
+
+func parseDecisionMessage(decision service.ParseValidationDecision) string {
+	if strings.TrimSpace(decision.Message) != "" {
+		return decision.Message
+	}
+	switch decision.Reason {
+	case "multiple_tasks":
+		return "Похоже, тут несколько задач. Создать одну или лучше прислать по отдельности?"
+	case "remind_after_due":
+		return "Напоминание получилось позже срока. Когда напомнить?"
+	case "missing_due_at":
+		return "Не понял срок. Создать без срока или указать дату?"
+	default:
+		return "Не понял задачу. Напиши чуть подробнее."
+	}
+}
+
+func parseClarificationKeyboard(decision service.ParseValidationDecision) map[string]any {
+	if len(decision.Actions) == 0 {
+		return nil
+	}
+	row := make([]map[string]string, 0, len(decision.Actions))
+	for _, action := range decision.Actions {
+		switch action {
+		case service.ParseActionCreateWithoutDue:
+			row = append(row, map[string]string{"text": "Создать без срока", "callback_data": "clarify:no_due"})
+		case service.ParseActionRemoveReminder:
+			row = append(row, map[string]string{"text": "Убрать напоминание", "callback_data": "clarify:no_reminder"})
+		}
+	}
+	if len(row) == 0 {
+		return nil
+	}
+	return map[string]any{"inline_keyboard": [][]map[string]string{row}}
+}
+
+func normalizeClarificationText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	switch text {
+	case "создать без срока", "без срока", "без даты":
+		return "create_without_due"
+	case "убрать напоминание", "без напоминания", "не напоминать":
+		return "remove_reminder"
+	default:
+		return ""
+	}
 }
 
 func formatProfileLinkError(ctx context.Context, b *Bot, chatID int64, err error) error {

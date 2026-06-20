@@ -34,8 +34,10 @@ func TestClientParseSuccess(t *testing.T) {
 				"clarification_reason": null
 			},
 			"confidence": 0.81,
+			"field_confidence": {"title": 0.92, "due_at": 0.84},
 			"source": "hybrid",
-			"time_source": "date_word"
+			"time_source": "date_word",
+			"model_version": "test-model-v1"
 		}`))
 	}))
 	defer server.Close()
@@ -54,6 +56,12 @@ func TestClientParseSuccess(t *testing.T) {
 	}
 	if result.Category == nil || *result.Category != "Финансы" {
 		t.Fatalf("Category = %v, want Финансы", result.Category)
+	}
+	if result.ParserSource != "hybrid" || result.TimeSource != "date_word" || result.ModelVersion != "test-model-v1" {
+		t.Fatalf("metadata source=%q time=%q version=%q", result.ParserSource, result.TimeSource, result.ModelVersion)
+	}
+	if result.FieldConfidence["title"] != 0.92 {
+		t.Fatalf("field confidence = %#v", result.FieldConfidence)
 	}
 	assertTime(t, result.DueAt, time.Date(2026, 6, 20, 16, 30, 0, 0, loc))
 	assertTime(t, result.RemindAt, time.Date(2026, 6, 20, 15, 30, 0, 0, loc))

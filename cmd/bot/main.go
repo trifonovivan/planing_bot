@@ -71,9 +71,13 @@ func main() {
 	serviceOptions := []service.Option{
 		service.WithMetrics(registry),
 		service.WithLogger(logger),
+		service.WithRawParseTextCollection(cfg.CollectRawParseText),
 	}
 	if cfg.MLParserURL != "" {
 		serviceOptions = append(serviceOptions, service.WithParser(mlparser.New(cfg.MLParserURL, mlparser.WithMetrics(registry))))
+	}
+	if cfg.ShadowParserURL != "" {
+		serviceOptions = append(serviceOptions, service.WithShadowParser(mlparser.New(cfg.ShadowParserURL, mlparser.WithMetrics(registry))))
 	}
 	planner := service.New(store, cfg.DefaultTimezone, location, serviceOptions...)
 	bot := telegram.New(cfg.BotToken.Value(), planner, telegram.WithBotUsername(cfg.BotUsername), telegram.WithMetrics(registry), telegram.WithLogger(logger))
@@ -86,6 +90,7 @@ func main() {
 		"metrics_enabled": cfg.MetricsEnabled,
 		"metrics_addr":    cfg.MetricsAddr,
 		"ml_parser":       cfg.MLParserURL != "",
+		"shadow_parser":   cfg.ShadowParserURL != "",
 	})
 	if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("planner_bot_failed", err, nil)

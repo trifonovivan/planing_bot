@@ -9,15 +9,17 @@ import (
 )
 
 type Config struct {
-	BotToken        Secret
-	BotUsername     string
-	DatabaseURL     Secret
-	AppEnv          string
-	DefaultTimezone string
-	DigestTime      string
-	MetricsEnabled  bool
-	MetricsAddr     string
-	MLParserURL     string
+	BotToken            Secret
+	BotUsername         string
+	DatabaseURL         Secret
+	AppEnv              string
+	DefaultTimezone     string
+	DigestTime          string
+	MetricsEnabled      bool
+	MetricsAddr         string
+	MLParserURL         string
+	ShadowParserURL     string
+	CollectRawParseText bool
 }
 
 type Secret struct {
@@ -47,15 +49,17 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		BotToken:        botToken,
-		BotUsername:     strings.TrimPrefix(getEnv("BOT_USERNAME", ""), "@"),
-		DatabaseURL:     databaseURL,
-		AppEnv:          getEnv("APP_ENV", "local"),
-		DefaultTimezone: getEnv("DEFAULT_TIMEZONE", "Europe/Moscow"),
-		DigestTime:      getEnv("DIGEST_TIME", "09:30"),
-		MetricsEnabled:  getBoolEnv("METRICS_ENABLED", true),
-		MetricsAddr:     getEnv("METRICS_ADDR", ":8080"),
-		MLParserURL:     strings.TrimSpace(getEnv("ML_PARSER_URL", "")),
+		BotToken:            botToken,
+		BotUsername:         strings.TrimPrefix(getEnv("BOT_USERNAME", ""), "@"),
+		DatabaseURL:         databaseURL,
+		AppEnv:              getEnv("APP_ENV", "local"),
+		DefaultTimezone:     getEnv("DEFAULT_TIMEZONE", "Europe/Moscow"),
+		DigestTime:          getEnv("DIGEST_TIME", "09:30"),
+		MetricsEnabled:      getBoolEnv("METRICS_ENABLED", true),
+		MetricsAddr:         getEnv("METRICS_ADDR", ":8080"),
+		MLParserURL:         strings.TrimSpace(getEnv("ML_PARSER_URL", "")),
+		ShadowParserURL:     strings.TrimSpace(getEnv("SHADOW_PARSER_URL", "")),
+		CollectRawParseText: getBoolEnv("PARSER_COLLECT_RAW_TEXT", false),
 	}, nil
 }
 

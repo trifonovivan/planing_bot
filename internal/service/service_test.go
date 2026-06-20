@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"planing_bot/internal/domain"
 	"planing_bot/internal/metrics"
+	"planing_bot/internal/parser"
 )
 
 func TestServiceTaskFlow(t *testing.T) {
@@ -297,6 +299,122 @@ func TestCreateProfileLinkInviteReusesExistingToken(t *testing.T) {
 	}
 }
 
+func TestValidateParsedTaskDecisions(t *testing.T) {
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, loc)
+	due := time.Date(2026, 6, 20, 11, 0, 0, 0, loc)
+	remind := time.Date(2026, 6, 20, 12, 0, 0, 0, loc)
+
+	tests := []struct {
+		name   string
+		text   string
+		in     parser.ParseResult
+		want   ParseDecisionType
+		reason string
+	}{
+		{
+			name:   "reminder after due needs clarification",
+			text:   "сегодня в 11 написать отчет, напомни в 12",
+			in:     parser.ParseResult{Title: "написать отчет", DueAt: &due, RemindAt: &remind, Priority: domain.PriorityP3, Confidence: 0.9},
+			want:   ParseDecisionNeedsClarification,
+			reason: "remind_after_due",
+		},
+		{
+			name:   "past due needs clarification",
+			text:   "сегодня в 9 написать отчет",
+			in:     parser.ParseResult{Title: "написать отчет", DueAt: ptrServiceTime(time.Date(2026, 6, 20, 9, 0, 0, 0, loc)), Priority: domain.PriorityP3, Confidence: 0.9},
+			want:   ParseDecisionNeedsClarification,
+			reason: "due_at_in_past",
+		},
+		{
+			name:   "bad title rejected",
+			text:   "завтра в 10",
+			in:     parser.ParseResult{Title: "завтра 10", DueAt: &due, Priority: domain.PriorityP3, Confidence: 0.9},
+			want:   ParseDecisionReject,
+			reason: "bad_title",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validateParsedTask(tt.text, tt.in, now)
+			if got.Decision != tt.want || got.Reason != tt.reason {
+				t.Fatalf("decision = %s/%s, want %s/%s", got.Decision, got.Reason, tt.want, tt.reason)
+			}
+		})
+	}
+}
+
+func TestCreateTaskEventStoresParserMetadataAndRedactsText(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc, WithParser(staticParser{result: parser.ParseResult{
+		Title:           "позвонить клиенту +79991234567",
+		Priority:        domain.PriorityP2,
+		Confidence:      0.82,
+		FieldConfidence: map[string]float64{"title": 0.91},
+		ParserSource:    "hybrid",
+		TimeSource:      "date_word",
+		ModelVersion:    "model-v1",
+		Warnings:        []string{"ml_parser_used"},
+	}}))
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 0, 0, 0, loc)
+	}
+
+	_, err := svc.CreateTaskFromText(ctx, domain.TelegramUser{TelegramID: 1001}, "позвонить test@example.com по +79991234567")
+	if err != nil {
+		t.Fatalf("CreateTaskFromText error: %v", err)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(store.events[0].Payload), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["input_text"] != nil {
+		t.Fatalf("payload contains raw input_text: %#v", payload)
+	}
+	if payload["redacted_input_text"] != "позвонить [email] по [phone]" {
+		t.Fatalf("redacted input = %#v", payload["redacted_input_text"])
+	}
+	if payload["parser_source"] != "hybrid" || payload["time_source"] != "date_word" || payload["model_version"] != "model-v1" {
+		t.Fatalf("metadata payload = %#v", payload)
+	}
+}
+
+func TestCreateTaskTurnsParserClarificationFailureIntoStructuredError(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc, WithParser(staticParser{
+		result: parser.ParseResult{
+			Priority:     domain.PriorityP3,
+			Confidence:   0.7,
+			ParserSource: "hybrid",
+			Warnings:     []string{"ml_parser_clarification: multiple_tasks"},
+		},
+		err: parser.ErrEmptyTitle,
+	}))
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 0, 0, 0, loc)
+	}
+
+	_, err := svc.CreateTaskFromText(ctx, domain.TelegramUser{TelegramID: 1001}, "1. купить молоко\n2. оплатить интернет")
+	var clarification *ParseClarificationError
+	if !errors.As(err, &clarification) {
+		t.Fatalf("err = %v, want ParseClarificationError", err)
+	}
+	if clarification.Decision.Reason != "multiple_tasks" {
+		t.Fatalf("reason = %q, want multiple_tasks", clarification.Decision.Reason)
+	}
+	if len(store.tasks) != 0 {
+		t.Fatalf("tasks = %d, want 0", len(store.tasks))
+	}
+}
+
 type fakeStore struct {
 	nextUserID       int64
 	nextWorkspaceID  int64
@@ -309,6 +427,16 @@ type fakeStore struct {
 	profileAliases   []fakeProfileAlias
 	tasks            map[int64]*domain.Task
 	reminders        map[int64]*domain.TaskReminder
+	events           []domain.TaskEvent
+}
+
+type staticParser struct {
+	result parser.ParseResult
+	err    error
+}
+
+func (p staticParser) Parse(context.Context, string, time.Time, *time.Location) (parser.ParseResult, error) {
+	return p.result, p.err
 }
 
 type fakeProfileAlias struct {
@@ -484,7 +612,18 @@ func (s *fakeStore) CreateTaskReminder(_ context.Context, taskID int64, remindAt
 	return nil
 }
 
-func (s *fakeStore) CreateTaskEvent(_ context.Context, _ int64, _ int64, _ string, _ any) error {
+func (s *fakeStore) CreateTaskEvent(_ context.Context, taskID int64, userID int64, eventType string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	s.events = append(s.events, domain.TaskEvent{
+		ID:        int64(len(s.events) + 1),
+		TaskID:    taskID,
+		UserID:    userID,
+		EventType: eventType,
+		Payload:   string(data),
+	})
 	return nil
 }
 

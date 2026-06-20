@@ -97,6 +97,7 @@ class PlanningParserModel:
             field_confidence={key: round(value, 4) for key, value in confidences.items()},
             source="hybrid",
             time_source=self._time_source(text, base_dt, raw_fields),
+            model_version=self.version or "unknown/local",
         )
 
     def _apply_guardrails(self, text: str, output: ParserOutput, confidences: dict[str, float]) -> None:

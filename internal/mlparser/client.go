@@ -39,6 +39,8 @@ type parseResponse struct {
 	FieldConfidence map[string]float64 `json:"field_confidence"`
 	Source          string             `json:"source"`
 	TimeSource      string             `json:"time_source"`
+	ModelVersion    string             `json:"model_version"`
+	ParserVersion   string             `json:"parser_version"`
 }
 
 type parserOutput struct {
@@ -180,10 +182,12 @@ func preferRuleSchedule(result parser.ParseResult, ruleResult parser.ParseResult
 			result.RecurrenceRule = ruleResult.RecurrenceRule
 		}
 		result.Warnings = append(result.Warnings, "rule_parser_schedule_used")
+		result.RuleOverrides = append(result.RuleOverrides, "schedule")
 	}
 	if ruleResult.Category != nil {
 		result.Category = ruleResult.Category
 		result.Warnings = append(result.Warnings, "rule_parser_category_used")
+		result.RuleOverrides = append(result.RuleOverrides, "category")
 	}
 	return result
 }
@@ -198,15 +202,33 @@ func (r parseResponse) toParseResult(location *time.Location) (parser.ParseResul
 	if r.Source != "" {
 		warnings = append(warnings, "ml_parser_source: "+r.Source)
 	}
+	if status != "" {
+		warnings = append(warnings, "ml_parser_status: "+status)
+	}
 	if r.Output.ClarificationReason != nil && *r.Output.ClarificationReason != "" {
 		warnings = append(warnings, "ml_parser_clarification: "+*r.Output.ClarificationReason)
+	}
+	modelVersion := strings.TrimSpace(r.ModelVersion)
+	if modelVersion == "" {
+		modelVersion = strings.TrimSpace(r.ParserVersion)
+	}
+	if modelVersion == "" {
+		modelVersion = "unknown/local"
+	}
+	source := strings.TrimSpace(r.Source)
+	if source == "" {
+		source = "ml"
 	}
 
 	if status == "ignored" || status == "failed" || status == "needs_clarification" {
 		return parser.ParseResult{
-			Priority:   domain.PriorityP3,
-			Confidence: confidence,
-			Warnings:   warnings,
+			Priority:        domain.PriorityP3,
+			Confidence:      confidence,
+			FieldConfidence: cloneFieldConfidence(r.FieldConfidence),
+			ParserSource:    source,
+			TimeSource:      strings.TrimSpace(r.TimeSource),
+			ModelVersion:    modelVersion,
+			Warnings:        warnings,
 		}, parser.ErrEmptyTitle
 	}
 
@@ -216,9 +238,13 @@ func (r parseResponse) toParseResult(location *time.Location) (parser.ParseResul
 	}
 	if title == "" {
 		return parser.ParseResult{
-			Priority:   domain.PriorityP3,
-			Confidence: confidence,
-			Warnings:   warnings,
+			Priority:        domain.PriorityP3,
+			Confidence:      confidence,
+			FieldConfidence: cloneFieldConfidence(r.FieldConfidence),
+			ParserSource:    source,
+			TimeSource:      strings.TrimSpace(r.TimeSource),
+			ModelVersion:    modelVersion,
+			Warnings:        warnings,
 		}, parser.ErrEmptyTitle
 	}
 
@@ -233,14 +259,18 @@ func (r parseResponse) toParseResult(location *time.Location) (parser.ParseResul
 	recurrenceRule := mapRepeat(r.Output.Repeat, &warnings)
 
 	return parser.ParseResult{
-		Title:          title,
-		DueAt:          dueAt,
-		RemindAt:       remindAt,
-		Priority:       mapPriority(r.Output.Priority),
-		Category:       mapCategory(r.Output.Category),
-		RecurrenceRule: recurrenceRule,
-		Confidence:     confidence,
-		Warnings:       warnings,
+		Title:           title,
+		DueAt:           dueAt,
+		RemindAt:        remindAt,
+		Priority:        mapPriority(r.Output.Priority),
+		Category:        mapCategory(r.Output.Category),
+		RecurrenceRule:  recurrenceRule,
+		Confidence:      confidence,
+		FieldConfidence: cloneFieldConfidence(r.FieldConfidence),
+		ParserSource:    source,
+		TimeSource:      strings.TrimSpace(r.TimeSource),
+		ModelVersion:    modelVersion,
+		Warnings:        warnings,
 	}, nil
 }
 
@@ -250,7 +280,21 @@ func fallbackParse(text string, now time.Time, location *time.Location, warning 
 		result.Warnings = append(result.Warnings, warning)
 	}
 	result.Warnings = append(result.Warnings, "rule_parser_fallback")
+	result.ParserSource = "rule"
+	result.ModelVersion = "rule/local"
+	result.Fallback = true
 	return result, err
+}
+
+func cloneFieldConfidence(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]float64, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
 }
 
 func parseOptionalTime(value *string, location *time.Location) (*time.Time, error) {

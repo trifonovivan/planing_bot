@@ -23,7 +23,12 @@ def get_model():
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    try:
+        model = get_model()
+        model_version = model.version or "unknown/local"
+    except RuntimeError:
+        model_version = "unavailable"
+    return {"status": "ok", "model_version": model_version, "parser_version": app.version}
 
 
 @app.post("/parse", response_model=ParseResponse)

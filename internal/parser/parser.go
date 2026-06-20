@@ -13,14 +13,20 @@ import (
 var ErrEmptyTitle = errors.New("empty task title")
 
 type ParseResult struct {
-	Title          string
-	DueAt          *time.Time
-	RemindAt       *time.Time
-	Priority       domain.Priority
-	Category       *string
-	RecurrenceRule *domain.RecurrenceRule
-	Confidence     float64
-	Warnings       []string
+	Title           string
+	DueAt           *time.Time
+	RemindAt        *time.Time
+	Priority        domain.Priority
+	Category        *string
+	RecurrenceRule  *domain.RecurrenceRule
+	Confidence      float64
+	FieldConfidence map[string]float64
+	ParserSource    string
+	TimeSource      string
+	ModelVersion    string
+	Fallback        bool
+	RuleOverrides   []string
+	Warnings        []string
 }
 
 type parsedDate struct {

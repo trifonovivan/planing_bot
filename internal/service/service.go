@@ -55,6 +55,8 @@ type Service struct {
 	defaultTimezone string
 	defaultLocation *time.Location
 	parser          textParser
+	shadowParser    textParser
+	collectRawText  bool
 	metrics         *metrics.Registry
 	logger          *logging.Logger
 	now             func() time.Time
@@ -120,6 +122,20 @@ func WithParser(textParser textParser) Option {
 		if textParser != nil {
 			s.parser = textParser
 		}
+	}
+}
+
+func WithShadowParser(textParser textParser) Option {
+	return func(s *Service) {
+		if textParser != nil {
+			s.shadowParser = textParser
+		}
+	}
+}
+
+func WithRawParseTextCollection(enabled bool) Option {
+	return func(s *Service) {
+		s.collectRawText = enabled
 	}
 }
 
@@ -216,7 +232,7 @@ func (s *Service) CreateTaskFromText(ctx context.Context, tgUser domain.Telegram
 			Options:  resolution.Options,
 		}
 	}
-	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, resolution.TaskText, resolution)
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, resolution.TaskText, resolution, "")
 }
 
 func (s *Service) CreateTaskForAssignee(ctx context.Context, tgUser domain.TelegramUser, text string, assigneeUserID int64) (*CreateTaskResult, error) {
@@ -241,10 +257,35 @@ func (s *Service) CreateTaskForAssignee(ctx context.Context, tgUser domain.Teleg
 		TaskText:       text,
 		Source:         assignee.SourceClarification,
 	}
-	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, text, resolution)
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, text, resolution, "")
 }
 
-func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domain.User, workspace *domain.Workspace, inputText string, taskText string, resolution assignee.Resolution) (*CreateTaskResult, error) {
+func (s *Service) CreateTaskFromParseClarification(ctx context.Context, tgUser domain.TelegramUser, text string, assigneeUserID int64, action ParseClarificationAction) (*CreateTaskResult, error) {
+	user, workspace, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	if assigneeUserID == 0 {
+		assigneeUserID = user.ID
+	}
+	if assigneeUserID != user.ID {
+		linkedProfiles, err := s.store.LinkedProfiles(ctx, user.ID)
+		if err != nil {
+			return nil, fmt.Errorf("linked profiles: %w", err)
+		}
+		if !isLinkedAssignee(linkedProfiles, assigneeUserID) {
+			return nil, ErrAssigneeNotLinked
+		}
+	}
+	resolution := assignee.Resolution{
+		AssigneeUserID: assigneeUserID,
+		TaskText:       text,
+		Source:         assignee.SourceClarification,
+	}
+	return s.createTaskForResolvedAssignee(ctx, user, workspace, text, text, resolution, action)
+}
+
+func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domain.User, workspace *domain.Workspace, inputText string, taskText string, resolution assignee.Resolution, action ParseClarificationAction) (*CreateTaskResult, error) {
 	assigneeUserID := resolution.AssigneeUserID
 	if assigneeUserID == 0 {
 		assigneeUserID = user.ID
@@ -268,9 +309,47 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 			"workspace_id": taskWorkspace.ID,
 			"reason":       parserErrorReason(err),
 		})
+		if errors.Is(err, parser.ErrEmptyTitle) {
+			decision := validateParseFailure(taskText, parsed)
+			s.observeParseDecision(decision, parsed)
+			if decision.Decision == ParseDecisionNeedsClarification {
+				return nil, &ParseClarificationError{
+					InputText:      inputText,
+					TaskText:       taskText,
+					AssigneeUserID: assigneeUserID,
+					Decision:       decision,
+					Parse:          parsed,
+				}
+			}
+			return nil, &ParseRejectedError{Decision: decision, Parse: parsed}
+		}
 		return nil, err
 	}
+	if parsed.ParserSource == "" {
+		parsed.ParserSource = "rule"
+	}
+	if parsed.ModelVersion == "" {
+		parsed.ModelVersion = parsed.ParserSource + "/local"
+	}
 	parsed = normalizeParsedSchedule(parsed, s.now().In(location), location)
+	if action != "" {
+		parsed = applyParseAction(parsed, action)
+	}
+	decision := validateParsedTask(taskText, parsed, s.now().In(location))
+	s.observeParseDecision(decision, parsed)
+	if decision.Decision == ParseDecisionReject {
+		return nil, &ParseRejectedError{Decision: decision, Parse: parsed}
+	}
+	if decision.Decision == ParseDecisionNeedsClarification && action == "" {
+		return nil, &ParseClarificationError{
+			InputText:      inputText,
+			TaskText:       taskText,
+			AssigneeUserID: assigneeUserID,
+			Decision:       decision,
+			Parse:          parsed,
+		}
+	}
+	shadow := s.shadowParse(ctx, taskText, location)
 
 	status := domain.StatusNew
 	if parsed.DueAt != nil {
@@ -296,16 +375,30 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 			return nil, fmt.Errorf("create task reminder: %w", err)
 		}
 	}
-	if err := s.store.CreateTaskEvent(ctx, task.ID, user.ID, "created", map[string]any{
+	payload := map[string]any{
 		"source":           "text",
-		"input_text":       inputText,
-		"task_text":        taskText,
 		"confidence":       parsed.Confidence,
+		"field_confidence": parsed.FieldConfidence,
+		"parser_source":    parsed.ParserSource,
+		"time_source":      parsed.TimeSource,
+		"model_version":    parsed.ModelVersion,
+		"fallback":         parsed.Fallback,
+		"rule_overrides":   parsed.RuleOverrides,
 		"warnings":         parsed.Warnings,
+		"validation":       decision,
+		"shadow_parse":     shadow,
 		"assignee_source":  resolution.Source,
 		"assignee_alias":   resolution.MatchedAlias,
 		"assignee_user_id": assigneeUserID,
-	}); err != nil {
+	}
+	if s.collectRawText {
+		payload["input_text"] = inputText
+		payload["task_text"] = taskText
+	} else {
+		payload["redacted_input_text"] = RedactText(inputText)
+		payload["redacted_task_text"] = RedactText(taskText)
+	}
+	if err := s.store.CreateTaskEvent(ctx, task.ID, user.ID, "created", payload); err != nil {
 		return nil, fmt.Errorf("create task event: %w", err)
 	}
 	s.incTaskMetric("task_created_total", task, user.ID)
@@ -711,6 +804,49 @@ func nullableTime(t *time.Time) any {
 	return t.Format(time.RFC3339)
 }
 
+func nullableTimeString(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+func (s *Service) shadowParse(ctx context.Context, taskText string, location *time.Location) map[string]any {
+	if s.shadowParser == nil {
+		return nil
+	}
+	start := time.Now()
+	result, err := s.shadowParser.Parse(ctx, taskText, s.now().In(location), location)
+	labels := metrics.Labels{"result": "success"}
+	if err != nil {
+		labels["result"] = "error"
+		labels["reason"] = parserErrorReason(err)
+	}
+	if s.metrics != nil {
+		s.metrics.Inc("parser_shadow_total", labels)
+		s.metrics.ObserveDuration("parser_shadow_duration_seconds", labels, start)
+	}
+	if err != nil {
+		s.logError("shadow_parser_failed", err, logging.Fields{"reason": parserErrorReason(err)})
+		return map[string]any{"error": parserErrorReason(err)}
+	}
+	return map[string]any{
+		"title":            result.Title,
+		"due_at":           nullableTimeString(result.DueAt),
+		"remind_at":        nullableTimeString(result.RemindAt),
+		"priority":         result.Priority,
+		"category":         result.Category,
+		"confidence":       result.Confidence,
+		"field_confidence": result.FieldConfidence,
+		"parser_source":    result.ParserSource,
+		"time_source":      result.TimeSource,
+		"model_version":    result.ModelVersion,
+		"fallback":         result.Fallback,
+		"rule_overrides":   result.RuleOverrides,
+		"warnings":         result.Warnings,
+	}
+}
+
 func emptyPayload() json.RawMessage {
 	return json.RawMessage(`{}`)
 }
@@ -781,6 +917,44 @@ func (s *Service) observeParser(start time.Time, err error) {
 		return
 	}
 	s.metrics.Inc("parser_success_total", nil)
+}
+
+func (s *Service) observeParseDecision(decision ParseValidationDecision, parsed parser.ParseResult) {
+	if s.metrics == nil {
+		return
+	}
+	labels := metrics.Labels{"reason": metricReason(decision.Reason)}
+	switch decision.Decision {
+	case ParseDecisionAccept:
+		s.metrics.Inc("parser_accept_total", labels)
+	case ParseDecisionAcceptWithWarnings:
+		s.metrics.Inc("parser_accept_total", labels)
+		s.metrics.Inc("parser_validation_warning_total", labels)
+	case ParseDecisionNeedsClarification:
+		s.metrics.Inc("parser_clarification_total", labels)
+		s.metrics.Inc("parser_validation_error_total", labels)
+	case ParseDecisionReject:
+		s.metrics.Inc("parser_reject_total", labels)
+		s.metrics.Inc("parser_validation_error_total", labels)
+	}
+	if parsed.Fallback {
+		s.metrics.Inc("parser_fallback_total", metrics.Labels{"source": metricReason(parsed.ParserSource)})
+	}
+	for _, field := range parsed.RuleOverrides {
+		s.metrics.Inc("parser_rule_override_total", metrics.Labels{"field": metricReason(field)})
+	}
+	for field, confidence := range parsed.FieldConfidence {
+		s.metrics.Observe("parser_field_confidence", metrics.Labels{"field": metricReason(field)}, confidence)
+	}
+}
+
+func metricReason(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "none"
+	}
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
 }
 
 func (s *Service) incTaskMetric(name string, task domain.Task, userID int64) {

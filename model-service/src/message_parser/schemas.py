@@ -23,6 +23,8 @@ class ParseResponse(BaseModel):
     field_confidence: Dict[str, float] = Field(default_factory=dict)
     source: str = "hybrid"
     time_source: str = "none"
+    model_version: str = "unknown/local"
+    parser_version: str = "0.1.0"
 
 
 class ParseRequest(BaseModel):
