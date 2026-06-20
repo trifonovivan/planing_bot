@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"planing_bot/internal/domain"
+	"planing_bot/internal/metrics"
 	"planing_bot/internal/parser"
 )
 
 func TestClientParseSuccess(t *testing.T) {
+	registry := metrics.NewRegistry()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/parse" {
 			t.Fatalf("path = %s, want /parse", r.URL.Path)
@@ -40,7 +42,7 @@ func TestClientParseSuccess(t *testing.T) {
 
 	loc := mustLocation(t)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, loc)
-	result, err := New(server.URL+"/parse").Parse(context.Background(), "седня к 16-30 оплатить инет", now, loc)
+	result, err := New(server.URL+"/parse", WithMetrics(registry)).Parse(context.Background(), "седня к 16-30 оплатить инет", now, loc)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -57,6 +59,15 @@ func TestClientParseSuccess(t *testing.T) {
 	assertTime(t, result.RemindAt, time.Date(2026, 6, 20, 15, 30, 0, 0, loc))
 	if !containsWarning(result.Warnings, "ml_parser_used") {
 		t.Fatalf("warnings = %#v, want ml_parser_used", result.Warnings)
+	}
+	body := registryBody(t, registry)
+	for _, want := range []string{
+		`ml_parser_request_total{result="success",status="success",time_source="date_word"} 1`,
+		`ml_parser_request_duration_seconds_count{result="success",status="success",time_source="date_word"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body does not contain %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -126,7 +137,42 @@ func TestClientPrefersRuleScheduleForEndOfMonth(t *testing.T) {
 	}
 }
 
+func TestClientUsesRuleCategoryWhenModelCategoryMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"output": {
+				"title": "написать селф ревью",
+				"due_at": null,
+				"remind_at": null,
+				"priority": "p1",
+				"category": null,
+				"assignee": null,
+				"repeat": null,
+				"status": "success",
+				"clarification_reason": null
+			},
+			"confidence": 0.77
+		}`))
+	}))
+	defer server.Close()
+
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 2, 23, 0, 0, loc)
+	result, err := New(server.URL).Parse(context.Background(), "Срочно напсать селф ревью", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if result.Category == nil || *result.Category != "Работа" {
+		t.Fatalf("Category = %v, want Работа", result.Category)
+	}
+	if !containsWarning(result.Warnings, "rule_parser_category_used") {
+		t.Fatalf("warnings = %#v, want rule_parser_category_used", result.Warnings)
+	}
+}
+
 func TestClientFallsBackToRuleParserOnHTTPError(t *testing.T) {
+	registry := metrics.NewRegistry()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -134,7 +180,7 @@ func TestClientFallsBackToRuleParserOnHTTPError(t *testing.T) {
 
 	loc := mustLocation(t)
 	now := time.Date(2026, 6, 19, 10, 0, 0, 0, loc)
-	result, err := New(server.URL).Parse(context.Background(), "завтра купить молоко", now, loc)
+	result, err := New(server.URL, WithMetrics(registry)).Parse(context.Background(), "завтра купить молоко", now, loc)
 	if err != nil {
 		t.Fatalf("Parse fallback error: %v", err)
 	}
@@ -147,9 +193,14 @@ func TestClientFallsBackToRuleParserOnHTTPError(t *testing.T) {
 	if !containsWarning(result.Warnings, "rule_parser_fallback") {
 		t.Fatalf("warnings = %#v, want fallback marker", result.Warnings)
 	}
+	body := registryBody(t, registry)
+	if !strings.Contains(body, `ml_parser_request_total{result="fallback",status="http_500",time_source="none"} 1`) {
+		t.Fatalf("metrics body does not contain fallback counter:\n%s", body)
+	}
 }
 
 func TestClientRejectedMessageReturnsEmptyTitle(t *testing.T) {
+	registry := metrics.NewRegistry()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -170,9 +221,13 @@ func TestClientRejectedMessageReturnsEmptyTitle(t *testing.T) {
 	defer server.Close()
 
 	loc := mustLocation(t)
-	_, err := New(server.URL).Parse(context.Background(), "привет", time.Date(2026, 6, 19, 10, 0, 0, 0, loc), loc)
+	_, err := New(server.URL, WithMetrics(registry)).Parse(context.Background(), "привет", time.Date(2026, 6, 19, 10, 0, 0, 0, loc), loc)
 	if !errors.Is(err, parser.ErrEmptyTitle) {
 		t.Fatalf("Parse error = %v, want ErrEmptyTitle", err)
+	}
+	body := registryBody(t, registry)
+	if !strings.Contains(body, `ml_parser_request_total{result="rejected",status="ignored",time_source="none"} 1`) {
+		t.Fatalf("metrics body does not contain rejected counter:\n%s", body)
 	}
 }
 
@@ -202,4 +257,11 @@ func containsWarning(warnings []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func registryBody(t *testing.T, registry *metrics.Registry) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	registry.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	return rec.Body.String()
 }

@@ -100,8 +100,8 @@ func TestParseRequiredScenarios(t *testing.T) {
 			name:       "weekday part of day",
 			text:       "в пятницу вечером купить продукты",
 			wantTitle:  "купить продукты",
-			wantDue:    ptrTime(time.Date(2026, 6, 19, 20, 0, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)),
+			wantDue:    ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 19, 18, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Покупки",
 		},
@@ -229,8 +229,8 @@ func TestParseRequiredScenarios(t *testing.T) {
 			name:       "day after tomorrow morning",
 			text:       "послезавтра утром сдать анализы",
 			wantTitle:  "сдать анализы",
-			wantDue:    ptrTime(time.Date(2026, 6, 21, 10, 0, 0, 0, loc)),
-			wantRemind: ptrTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)),
+			wantDue:    ptrTime(time.Date(2026, 6, 21, 9, 0, 0, 0, loc)),
+			wantRemind: ptrTime(time.Date(2026, 6, 21, 8, 0, 0, 0, loc)),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Здоровье",
 		},
@@ -374,13 +374,13 @@ func TestRecurrenceDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse evening error: %v", err)
 	}
-	assertTimePtr(t, "evening remind", evening.RemindAt, ptrTime(time.Date(2026, 6, 19, 20, 0, 0, 0, loc)))
+	assertTimePtr(t, "evening remind", evening.RemindAt, ptrTime(time.Date(2026, 6, 19, 19, 0, 0, 0, loc)))
 
 	daytime, err := Parse("завтра днём созвон", time.Date(2026, 6, 19, 10, 0, 0, 0, loc), loc)
 	if err != nil {
 		t.Fatalf("Parse daytime error: %v", err)
 	}
-	assertTimePtr(t, "daytime due", daytime.DueAt, ptrTime(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)))
+	assertTimePtr(t, "daytime due", daytime.DueAt, ptrTime(time.Date(2026, 6, 20, 13, 0, 0, 0, loc)))
 }
 
 func TestExplicitReminderClause(t *testing.T) {
@@ -450,7 +450,7 @@ func TestMessageVariantsCorpus(t *testing.T) {
 			text:       "Купить подарок к пятнице 20:00, напомни мне вечером накануне",
 			wantTitle:  "Купить подарок",
 			wantDue:    time.Date(2026, 6, 26, 20, 0, 0, 0, loc),
-			wantRemind: time.Date(2026, 6, 25, 20, 0, 0, 0, loc),
+			wantRemind: time.Date(2026, 6, 25, 19, 0, 0, 0, loc),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Покупки",
 		},
@@ -521,7 +521,7 @@ func TestMessageVariantsCorpus(t *testing.T) {
 			text:           "Пожалуйста, напомни полить рассаду каждый день утром",
 			wantTitle:      "полить рассаду",
 			wantDue:        time.Date(2026, 6, 21, 23, 59, 0, 0, loc),
-			wantRemind:     time.Date(2026, 6, 21, 10, 0, 0, 0, loc),
+			wantRemind:     time.Date(2026, 6, 21, 9, 0, 0, 0, loc),
 			wantPrio:       domain.PriorityP3,
 			wantCat:        "Дача",
 			wantRecurrence: true,
@@ -530,8 +530,8 @@ func TestMessageVariantsCorpus(t *testing.T) {
 			name:       "part of day with preposition",
 			text:       "до вечера оплатить интернет",
 			wantTitle:  "оплатить интернет",
-			wantDue:    time.Date(2026, 6, 20, 20, 0, 0, 0, loc),
-			wantRemind: time.Date(2026, 6, 20, 19, 0, 0, 0, loc),
+			wantDue:    time.Date(2026, 6, 20, 19, 0, 0, 0, loc),
+			wantRemind: time.Date(2026, 6, 20, 18, 0, 0, 0, loc),
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Финансы",
 		},

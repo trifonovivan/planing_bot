@@ -32,6 +32,16 @@ MONTHS = {
     "декабря": 12,
 }
 
+NUMBER_WORDS = {
+    "одну": 1,
+    "один": 1,
+    "два": 2,
+    "две": 2,
+    "три": 3,
+    "четыре": 4,
+    "пять": 5,
+}
+
 WEEKDAYS = {
     "понедельник": 0,
     "понедельника": 0,
@@ -78,6 +88,12 @@ def _resolve_due(text: str, base_time: datetime) -> tuple[datetime | None, str]:
 
     date_value, date_kind = _date_due(text, base_time)
     if date_value is None:
+        day_part_time = _day_part_only_due(text, base_time)
+        if day_part_time is not None:
+            return day_part_time, "day_part"
+        clock_time = _clock_only_due(text, base_time)
+        if clock_time is not None:
+            return clock_time, "clock"
         work_time = _workday_due(text, base_time)
         if work_time is not None:
             return work_time, "workday"
@@ -96,13 +112,20 @@ def _relative_due(text: str, base_time: datetime) -> datetime | None:
     if re.search(r"\bчерез\s+час\b", text):
         return base_time + timedelta(hours=1)
 
+    amount: int
+    unit: str
     match = re.search(r"\bчерез\s+(\d+)\s+(минут[а-я]*|час[а-я]*|дн[яей]*|недел[а-я]*|месяц[а-я]*)\b", text)
     if match is None:
-        match = re.search(r"\bчерез\s+(неделю|месяц)\b", text)
-        if match is None:
-            return None
-        amount = 1
-        unit = match.group(1)
+        word_match = re.search(r"\bчерез\s+(одну|один|два|две|три|четыре|пять)\s+(минут[а-я]*|час[а-я]*|дн[яей]*|недел[а-я]*|месяц[а-я]*)\b", text)
+        if word_match is not None:
+            amount = NUMBER_WORDS[word_match.group(1)]
+            unit = word_match.group(2)
+        else:
+            match = re.search(r"\bчерез\s+(неделю|месяц)\b", text)
+            if match is None:
+                return None
+            amount = 1
+            unit = match.group(1)
     else:
         amount = int(match.group(1))
         unit = match.group(2)
@@ -121,13 +144,22 @@ def _relative_due(text: str, base_time: datetime) -> datetime | None:
 
 
 def _date_due(text: str, base_time: datetime) -> tuple[datetime | None, str]:
+    correction = re.search(r"\bне\s+.+?\s+а\s+(.+)", text)
+    if correction is not None:
+        corrected_due, corrected_kind = _date_due_uncorrected(correction.group(1), base_time)
+        if corrected_due is not None:
+            return corrected_due, corrected_kind
+    return _date_due_uncorrected(text, base_time)
+
+
+def _date_due_uncorrected(text: str, base_time: datetime) -> tuple[datetime | None, str]:
     if "до конца недели" in text:
         return base_time + timedelta(days=(6 - base_time.weekday()) % 7), "end_of_week"
-    if "до конца месяца" in text:
+    if re.search(r"\b(?:(?:в|к|ко|до)\s+)?конц(?:е|у|а)\s+месяца\b", text):
         last_day = calendar.monthrange(base_time.year, base_time.month)[1]
         return base_time.replace(day=last_day), "end_of_month"
 
-    if "послезавтра" in text:
+    if "послезавтра" in text or "после завтра" in text:
         return base_time + timedelta(days=2), "date_word"
     if "завтра" in text:
         return base_time + timedelta(days=1), "date_word"
@@ -156,17 +188,19 @@ def _date_due(text: str, base_time: datetime) -> tuple[datetime | None, str]:
             days = 0
         return base_time + timedelta(days=days), "weekend"
 
-    qualified_weekday = re.search(r"\b(?:в\s+)?(следующ(?:ий|ую|ее)|будущ(?:ий|ую|ее)|эт(?:от|у|о))\s+(понедельник[а]?|вторник[а]?|сред[уаы]?|четверг[а]?|пятниц[уаы]?|суббот[уаы]?|воскресень[ея])\b", text)
+    qualified_weekday = re.search(r"\b(?:(в|во|до|к|на)\s+)?(следующ(?:ий|ую|ее|ей)|будущ(?:ий|ую|ее|ей)|эт(?:от|у|о|ой))\s+(понедельник[а]?|вторник[а]?|сред[уаы]?|четверг[а]?|пятниц[уаы]?|суббот[уаы]?|воскресень[ея])\b", text)
     if qualified_weekday is not None:
-        qualifier = qualified_weekday.group(1)
-        day_name = qualified_weekday.group(2)
+        preposition = qualified_weekday.group(1)
+        qualifier = qualified_weekday.group(2)
+        day_name = qualified_weekday.group(3)
         target = WEEKDAYS[day_name]
         days = (target - base_time.weekday()) % 7
         if qualifier.startswith(("след", "будущ")):
             days = days + 7 if days == 0 else days
-        return base_time + timedelta(days=days), "qualified_weekday"
+        kind = "weekday_until" if preposition in {"до", "к"} else "qualified_weekday"
+        return base_time + timedelta(days=days), kind
 
-    weekday = re.search(r"\b(в|во|до|к)\s+(понедельник[а]?|вторник[а]?|сред[уаы]?|четверг[а]?|пятниц[уаы]?|суббот[уаы]?|воскресень[ея])\b", text)
+    weekday = re.search(r"\b(в|во|до|к|на)\s+(понедельник[а]?|вторник[а]?|сред[уаы]?|четверг[а]?|пятниц[уаы]?|суббот[уаы]?|воскресень[ея])\b", text)
     if weekday is not None:
         preposition = weekday.group(1)
         day_name = weekday.group(2)
@@ -202,6 +236,26 @@ def _workday_due(text: str, base_time: datetime) -> datetime | None:
     if "перед работой" in text:
         return _with_clock(base_time, 9, 0)
     return None
+
+
+def _day_part_only_due(text: str, base_time: datetime) -> datetime | None:
+    clock = _day_part_clock(text)
+    if clock is None:
+        return None
+    due = _with_clock(base_time, clock[0], clock[1])
+    if due <= base_time:
+        due = due + timedelta(days=1)
+    return due
+
+
+def _clock_only_due(text: str, base_time: datetime) -> datetime | None:
+    clock = _explicit_clock(text)
+    if clock is None:
+        return None
+    due = _with_clock(base_time, clock[0], clock[1])
+    if due <= base_time:
+        due = due + timedelta(days=1)
+    return due
 
 
 def _resolve_reminder(text: str, due_at: datetime) -> datetime | None:

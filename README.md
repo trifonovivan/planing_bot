@@ -279,6 +279,7 @@ telegram_update_total{type}
 telegram_callback_total{action}
 parser_success_total
 parser_error_total{reason}
+ml_parser_request_total{result,status,time_source}
 storage_error_total{operation}
 telegram_send_error_total{operation}
 ```
@@ -297,6 +298,7 @@ Histograms:
 ```text
 telegram_update_duration_seconds
 parser_duration_seconds
+ml_parser_request_duration_seconds{result,status,time_source}
 storage_query_duration_seconds{operation}
 scheduler_iteration_duration_seconds
 ```

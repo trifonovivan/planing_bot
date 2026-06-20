@@ -561,16 +561,16 @@ func parseClock(lower string) (parsedClock, []string) {
 			hour   int
 			minute int
 		}{
-			{word: "утром", hour: 10},
-			{word: "утра", hour: 10},
-			{word: "днём", hour: 12},
-			{word: "днем", hour: 12},
-			{word: "обеду", hour: 12},
-			{word: "обеда", hour: 12},
-			{word: "вечером", hour: 20},
-			{word: "вечера", hour: 20},
-			{word: "ночью", hour: 22},
-			{word: "ночи", hour: 22},
+			{word: "утром", hour: 9},
+			{word: "утра", hour: 9},
+			{word: "днём", hour: 13},
+			{word: "днем", hour: 13},
+			{word: "обеду", hour: 13},
+			{word: "обеда", hour: 14},
+			{word: "вечером", hour: 19},
+			{word: "вечера", hour: 19},
+			{word: "ночью", hour: 23},
+			{word: "ночи", hour: 23},
 		}
 		for _, item := range partOfDay {
 			if containsToken(lower, item.word) {
@@ -661,10 +661,10 @@ func detectCategory(lower string) (*string, []string) {
 		name     string
 		keywords []string
 	}{
-		{name: "Работа", keywords: []string{"работ", "отчет", "договор", "клиент", "релиз", "документ", "презентац", "статус", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча"}},
+		{name: "Работа", keywords: []string{"работ", "отчет", "договор", "клиент", "релиз", "документ", "презентац", "статус", "тдр", "kong", "postgres", "код", "задач", "созвон", "встреча", "селф", "ревью"}},
 		{name: "Учеба", keywords: []string{"учеба", "диплом", "экзамен", "институт"}},
-		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховк", "оплатить"}},
-		{name: "Дача", keywords: []string{"огурцы", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить", "петуни"}},
+		{name: "Финансы", keywords: []string{"ипотека", "вклад", "инвестиции", "налог", "страховк", "оплатить", "инет", "интернет"}},
+		{name: "Дача", keywords: []string{"огурцы", "огурц", "огуз", "томаты", "смородина", "теплица", "грядки", "удобрения", "полить", "петуни", "побрызг", "побрыск", "опрыск"}},
 		{name: "Авто", keywords: []string{"машин", "lexus", "шины", "масло", "страховк", "бензин"}},
 		{name: "Покупки", keywords: []string{"купить", "заказать", "маркет", "озон", "wildberries"}},
 		{name: "Здоровье", keywords: []string{"врач", "давление", "анализы", "таблетки", "аптека"}},
@@ -695,9 +695,9 @@ func detectRecurrence(lower string) (*domain.RecurrenceRule, parsedClock) {
 	case regexp.MustCompile(`(?i)(^|[\s,])(каждый\s+день|ежедневно)($|[\s,])`).MatchString(lower):
 		return &rule, parsedClock{hour: 10, minute: 0, found: true}
 	case regexp.MustCompile(`(?i)(^|[\s,])каждое\s+утро($|[\s,])`).MatchString(lower):
-		return &rule, parsedClock{hour: 10, minute: 0, found: true}
+		return &rule, parsedClock{hour: 9, minute: 0, found: true}
 	case regexp.MustCompile(`(?i)(^|[\s,])каждый\s+вечер($|[\s,])`).MatchString(lower):
-		return &rule, parsedClock{hour: 20, minute: 0, found: true}
+		return &rule, parsedClock{hour: 19, minute: 0, found: true}
 	default:
 		return nil, parsedClock{}
 	}

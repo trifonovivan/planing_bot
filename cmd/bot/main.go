@@ -73,7 +73,7 @@ func main() {
 		service.WithLogger(logger),
 	}
 	if cfg.MLParserURL != "" {
-		serviceOptions = append(serviceOptions, service.WithParser(mlparser.New(cfg.MLParserURL)))
+		serviceOptions = append(serviceOptions, service.WithParser(mlparser.New(cfg.MLParserURL, mlparser.WithMetrics(registry))))
 	}
 	planner := service.New(store, cfg.DefaultTimezone, location, serviceOptions...)
 	bot := telegram.New(cfg.BotToken.Value(), planner, telegram.WithBotUsername(cfg.BotUsername), telegram.WithMetrics(registry), telegram.WithLogger(logger))
