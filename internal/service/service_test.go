@@ -272,6 +272,31 @@ func TestLinkedProfileAssigneeResolution(t *testing.T) {
 	assertAssignee(t, manual.Task, momUser.ID)
 }
 
+func TestCreateProfileLinkInviteReusesExistingToken(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc)
+
+	ivan := domain.TelegramUser{TelegramID: 1001, Username: "ivan", FirstName: "Иван"}
+	mom := domain.TelegramUser{TelegramID: 2002, Username: "mom", FirstName: "Таня"}
+
+	first, err := svc.CreateProfileLinkInvite(ctx, ivan, []string{"мама", "Таня"})
+	if err != nil {
+		t.Fatalf("first CreateProfileLinkInvite error: %v", err)
+	}
+	second, err := svc.CreateProfileLinkInvite(ctx, ivan, []string{"мама", "Таня"})
+	if err != nil {
+		t.Fatalf("second CreateProfileLinkInvite error: %v", err)
+	}
+	if second.Token != first.Token {
+		t.Fatalf("second token = %q, want existing token %q", second.Token, first.Token)
+	}
+	if _, err := svc.AcceptProfileLinkInvite(ctx, mom, second.Token, []string{"Ваня"}); err != nil {
+		t.Fatalf("AcceptProfileLinkInvite with reused token error: %v", err)
+	}
+}
+
 type fakeStore struct {
 	nextUserID       int64
 	nextWorkspaceID  int64
@@ -291,6 +316,7 @@ type fakeProfileAlias struct {
 	OwnerUserID  int64
 	TargetUserID *int64
 	Alias        string
+	Normalized   string
 }
 
 func newFakeStore() *fakeStore {
@@ -339,6 +365,21 @@ func (s *fakeStore) EnsurePersonalWorkspace(_ context.Context, userID int64) (*d
 }
 
 func (s *fakeStore) CreateProfileLinkInvite(_ context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	for _, input := range aliases {
+		for _, alias := range s.profileAliases {
+			if alias.OwnerUserID != inviterUserID || alias.Normalized != input.NormalizedAlias {
+				continue
+			}
+			link := s.linkByID(alias.LinkID)
+			if link == nil {
+				continue
+			}
+			if link.Status == domain.ProfileLinkPending {
+				return cloneProfileLink(link), nil
+			}
+			return nil, ErrProfileAliasInUse
+		}
+	}
 	link := &domain.ProfileLink{
 		ID:            s.nextLinkID,
 		InviteToken:   token,
@@ -352,6 +393,7 @@ func (s *fakeStore) CreateProfileLinkInvite(_ context.Context, inviterUserID int
 			LinkID:      link.ID,
 			OwnerUserID: inviterUserID,
 			Alias:       alias.Alias,
+			Normalized:  alias.NormalizedAlias,
 		})
 	}
 	return cloneProfileLink(link), nil
@@ -385,6 +427,7 @@ func (s *fakeStore) AcceptProfileLinkInvite(_ context.Context, token string, inv
 			OwnerUserID:  inviteeUserID,
 			TargetUserID: &inviterID,
 			Alias:        alias.Alias,
+			Normalized:   alias.NormalizedAlias,
 		})
 	}
 	return cloneProfileLink(link), nil
@@ -539,6 +582,15 @@ func (s *fakeStore) HasDigestRun(_ context.Context, _ int64, _ time.Time) (bool,
 }
 
 func (s *fakeStore) MarkDigestRun(_ context.Context, _ int64, _ time.Time, _ time.Time) error {
+	return nil
+}
+
+func (s *fakeStore) linkByID(linkID int64) *domain.ProfileLink {
+	for _, link := range s.linksByToken {
+		if link.ID == linkID {
+			return link
+		}
+	}
 	return nil
 }
 

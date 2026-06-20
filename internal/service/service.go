@@ -171,7 +171,7 @@ func (s *Service) CreateProfileLinkInvite(ctx context.Context, tgUser domain.Tel
 	if err != nil {
 		return nil, fmt.Errorf("create profile link invite: %w", err)
 	}
-	return &ProfileLinkInviteResult{Link: *link, Token: token, Aliases: expanded}, nil
+	return &ProfileLinkInviteResult{Link: *link, Token: link.InviteToken, Aliases: expanded}, nil
 }
 
 func (s *Service) AcceptProfileLinkInvite(ctx context.Context, tgUser domain.TelegramUser, token string, aliases []string) (*domain.ProfileLink, error) {
