@@ -100,6 +100,9 @@ jobs:
             | tee artifacts/evaluation.json
           python -c 'import json, os; metrics = json.load(open("artifacts/evaluation.json")); threshold = float(os.environ["MIN_EXACT_MATCH"]); actual = float(metrics["exact_match"]); print(f"exact_match={actual:.4f}, threshold={threshold:.4f}"); raise SystemExit(0 if actual >= threshold else 1)'
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build model service image
         uses: docker/build-push-action@v6
         with:
