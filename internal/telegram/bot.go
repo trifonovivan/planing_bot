@@ -178,7 +178,7 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		if err != nil {
 			return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 		}
-		return b.sendMessage(ctx, message.Chat.ID, formatInvite(result, b.botUsername), nil)
+		return b.sendMessage(ctx, message.Chat.ID, b.formatInvite(ctx, result), nil)
 	case "/accept":
 		token, aliases, ok := parseAcceptArgs(args)
 		if !ok {
@@ -217,7 +217,7 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 				return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 			}
 			b.forgetPendingLinkCreate(user.TelegramID)
-			return b.sendMessage(ctx, message.Chat.ID, formatInvite(result, b.botUsername), nil)
+			return b.sendMessage(ctx, message.Chat.ID, b.formatInvite(ctx, result), nil)
 		}
 		if pending, ok := b.pendingClarification(user.TelegramID); ok {
 			return b.handleAssigneeClarification(ctx, message, user, text, pending)
@@ -432,6 +432,44 @@ func (b *Bot) answerCallback(ctx context.Context, callbackID string, text string
 	return b.postJSON(ctx, "answerCallbackQuery", payload, nil)
 }
 
+func (b *Bot) formatInvite(ctx context.Context, result *service.ProfileLinkInviteResult) string {
+	return formatInvite(result, b.resolveBotUsername(ctx))
+}
+
+func (b *Bot) resolveBotUsername(ctx context.Context) string {
+	b.mu.Lock()
+	username := b.botUsername
+	b.mu.Unlock()
+	if username != "" {
+		return username
+	}
+
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      user   `json:"result"`
+	}
+	if err := b.postJSON(ctx, "getMe", map[string]any{}, &resp); err != nil {
+		b.logError("telegram_get_me_failed", err, nil)
+		return ""
+	}
+	if !resp.OK || strings.TrimSpace(resp.Result.Username) == "" {
+		if resp.Description != "" {
+			b.logError("telegram_get_me_failed", fmt.Errorf("%s", resp.Description), nil)
+		}
+		return ""
+	}
+
+	username = strings.TrimPrefix(strings.TrimSpace(resp.Result.Username), "@")
+	b.mu.Lock()
+	if b.botUsername == "" {
+		b.botUsername = username
+	}
+	username = b.botUsername
+	b.mu.Unlock()
+	return username
+}
+
 func (b *Bot) postJSON(ctx context.Context, method string, payload any, out any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -567,11 +605,11 @@ func formatCreatedTask(result *service.CreateTaskResult) string {
 
 func formatInvite(result *service.ProfileLinkInviteResult, botUsername string) string {
 	payload := "link_" + result.Token
-	link := payload
 	if botUsername != "" {
-		link = fmt.Sprintf("https://t.me/%s?start=%s", botUsername, payload)
+		link := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, payload)
+		return fmt.Sprintf("Инвайт создан.\n\nСсылка: %s\n\nЯ буду понимать алиасы: %s\n\nПосле открытия ссылки второй человек должен указать, как будет называть тебя.", link, strings.Join(result.Aliases, ", "))
 	}
-	return fmt.Sprintf("Инвайт создан.\n\nСсылка/код: %s\n\nЯ буду понимать алиасы: %s\n\nПосле открытия ссылки второй человек должен указать, как будет называть тебя.", link, strings.Join(result.Aliases, ", "))
+	return fmt.Sprintf("Инвайт создан.\n\nКод для ручного принятия: %s\n\nПопроси второго человека отправить:\n/accept %s <его алиасы для тебя>\n\nЯ буду понимать алиасы: %s", payload, payload, strings.Join(result.Aliases, ", "))
 }
 
 func formatLinkedProfiles(profiles []domain.LinkedProfile) string {

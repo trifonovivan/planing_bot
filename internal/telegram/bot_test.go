@@ -22,17 +22,21 @@ func TestInviteWithoutArgsUsesNextMessageAsAliases(t *testing.T) {
 
 	var messages []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sendMessage" {
-			t.Fatalf("path = %s, want /sendMessage", r.URL.Path)
+		switch r.URL.Path {
+		case "/sendMessage":
+			var payload struct {
+				Text string `json:"text"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			messages = append(messages, payload.Text)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/getMe":
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":42,"username":"planner_test_bot","first_name":"Planner"}}`))
+		default:
+			t.Fatalf("path = %s, want /sendMessage or /getMe", r.URL.Path)
 		}
-		var payload struct {
-			Text string `json:"text"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		messages = append(messages, payload.Text)
-		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
 
@@ -63,8 +67,32 @@ func TestInviteWithoutArgsUsesNextMessageAsAliases(t *testing.T) {
 	if !strings.Contains(messages[1], "Инвайт создан") {
 		t.Fatalf("second message = %q", messages[1])
 	}
+	if !strings.Contains(messages[1], "https://t.me/planner_test_bot?start=link_") {
+		t.Fatalf("second message has no deep link: %q", messages[1])
+	}
+	if strings.Contains(messages[1], "Ссылка/код") {
+		t.Fatalf("second message contains old link label: %q", messages[1])
+	}
 	if strings.Contains(messages[1], "Задача создана") {
 		t.Fatalf("second message created a task: %q", messages[1])
+	}
+}
+
+func TestFormatInviteFallbackUsesManualAcceptCode(t *testing.T) {
+	result := &service.ProfileLinkInviteResult{
+		Token:   "abc",
+		Aliases: []string{"мама", "маме"},
+	}
+
+	got := formatInvite(result, "")
+	if strings.Contains(got, "Ссылка/код") {
+		t.Fatalf("message contains old label: %q", got)
+	}
+	if !strings.Contains(got, "Код для ручного принятия: link_abc") {
+		t.Fatalf("message = %q, want manual code", got)
+	}
+	if !strings.Contains(got, "/accept link_abc") {
+		t.Fatalf("message = %q, want accept command", got)
 	}
 }
 
