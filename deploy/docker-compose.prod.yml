@@ -57,6 +57,7 @@ services:
     environment:
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
       BOT_TOKEN_FILE: ${BOT_TOKEN_FILE:-}
+      BOT_USERNAME: ${BOT_USERNAME:-}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
       APP_ENV: ${APP_ENV:-production}

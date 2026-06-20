@@ -43,6 +43,8 @@ type pendingClarification struct {
 	CreatedAt time.Time
 }
 
+const botUsernameResolveTimeout = 2 * time.Second
+
 func WithMetrics(registry *metrics.Registry) Option {
 	return func(b *Bot) {
 		b.metrics = registry
@@ -444,23 +446,15 @@ func (b *Bot) resolveBotUsername(ctx context.Context) string {
 		return username
 	}
 
-	var resp struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-		Result      user   `json:"result"`
-	}
-	if err := b.postJSON(ctx, "getMe", map[string]any{}, &resp); err != nil {
+	username, err := b.getMeUsername(ctx)
+	if err != nil {
 		b.logError("telegram_get_me_failed", err, nil)
 		return ""
 	}
-	if !resp.OK || strings.TrimSpace(resp.Result.Username) == "" {
-		if resp.Description != "" {
-			b.logError("telegram_get_me_failed", fmt.Errorf("%s", resp.Description), nil)
-		}
+	if username == "" {
 		return ""
 	}
 
-	username = strings.TrimPrefix(strings.TrimSpace(resp.Result.Username), "@")
 	b.mu.Lock()
 	if b.botUsername == "" {
 		b.botUsername = username
@@ -468,6 +462,40 @@ func (b *Bot) resolveBotUsername(ctx context.Context) string {
 	username = b.botUsername
 	b.mu.Unlock()
 	return username
+}
+
+func (b *Bot) getMeUsername(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, botUsernameResolveTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/getMe", nil)
+	if err != nil {
+		return "", err
+	}
+	httpResp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode >= 300 {
+		return "", fmt.Errorf("telegram getMe status: %s", httpResp.Status)
+	}
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      user   `json:"result"`
+	}
+	if err := json.NewDecoder(httpResp.Body).Decode(&apiResp); err != nil {
+		return "", err
+	}
+	if !apiResp.OK || strings.TrimSpace(apiResp.Result.Username) == "" {
+		if apiResp.Description != "" {
+			return "", fmt.Errorf("%s", apiResp.Description)
+		}
+		return "", nil
+	}
+	return strings.TrimPrefix(strings.TrimSpace(apiResp.Result.Username), "@"), nil
 }
 
 func (b *Bot) postJSON(ctx context.Context, method string, payload any, out any) error {

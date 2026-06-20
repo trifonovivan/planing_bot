@@ -37,7 +37,7 @@ cp .env.example .env
 ```text
 BOT_TOKEN=
 BOT_TOKEN_FILE=
-BOT_USERNAME=
+BOT_USERNAME=iatrifonov_planing_bot
 POSTGRES_USER=planner
 POSTGRES_PASSWORD=change_me
 POSTGRES_DB=planner
@@ -209,6 +209,7 @@ DEPLOY_SSH_KEY=<private-ssh-key>
 DEPLOY_PORT=22
 DEPLOY_PATH=/opt/planner-bot
 BOT_TOKEN=<telegram-bot-token>
+BOT_USERNAME=iatrifonov_planing_bot
 POSTGRES_PASSWORD=<postgres-password>
 DATABASE_URL=postgres://planner:<postgres-password>@postgres:5432/planner?sslmode=disable
 POSTGRES_USER=planner

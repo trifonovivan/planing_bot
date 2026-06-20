@@ -27,6 +27,7 @@ jobs:
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/planner-bot' }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      BOT_USERNAME: ${{ vars.BOT_USERNAME || 'iatrifonov_planing_bot' }}
       POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'planner' }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'planner' }}
@@ -79,6 +80,7 @@ jobs:
         run: |
           cat > .deploy.env <<EOF
           BOT_TOKEN=$BOT_TOKEN
+          BOT_USERNAME=$BOT_USERNAME
           POSTGRES_USER=$POSTGRES_USER
           POSTGRES_PASSWORD=$POSTGRES_PASSWORD
           POSTGRES_DB=$POSTGRES_DB

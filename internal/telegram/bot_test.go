@@ -96,6 +96,48 @@ func TestFormatInviteFallbackUsesManualAcceptCode(t *testing.T) {
 	}
 }
 
+func TestInviteStillRepliesWhenGetMeFails(t *testing.T) {
+	ctx := context.Background()
+	store := &telegramFakeStore{}
+	loc := mustLocation(t)
+	planner := service.New(store, "Europe/Moscow", loc)
+
+	var messages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/getMe":
+			http.Error(w, "temporary telegram error", http.StatusBadGateway)
+		case "/sendMessage":
+			var payload struct {
+				Text string `json:"text"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			messages = append(messages, payload.Text)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			t.Fatalf("path = %s, want /sendMessage or /getMe", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	bot := New("token", planner)
+	bot.baseURL = server.URL
+	from := user{ID: 1001, Username: "ivan", FirstName: "Иван"}
+	targetChat := chat{ID: 2002}
+
+	if err := bot.handleMessage(ctx, message{From: from, Chat: targetChat, Text: "/link мама, мам, Таня"}); err != nil {
+		t.Fatalf("handle /link: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	if !strings.Contains(messages[0], "Код для ручного принятия: link_") {
+		t.Fatalf("message = %q, want manual code fallback", messages[0])
+	}
+}
+
 type telegramFakeStore struct {
 	user    *domain.User
 	space   *domain.Workspace
