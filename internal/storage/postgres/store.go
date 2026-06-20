@@ -84,6 +84,17 @@ ON CONFLICT (workspace_id, user_id) DO NOTHING`, workspace.ID, userID, domain.Ro
 }
 
 func (s *Store) CreateProfileLinkInvite(ctx context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	existing, err := s.profileLinkForAliases(ctx, inviterUserID, aliases)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		if existing.Status == domain.ProfileLinkPending {
+			return existing, nil
+		}
+		return nil, service.ErrProfileAliasInUse
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -100,9 +111,65 @@ RETURNING id, invite_token, inviter_user_id, invitee_user_id, status, created_at
 		return nil, err
 	}
 	if err := insertProfileAliases(ctx, tx, link.ID, inviterUserID, nil, aliases); err != nil {
+		_ = tx.Rollback()
+		existing, findErr := s.profileLinkForAliases(ctx, inviterUserID, aliases)
+		if findErr != nil {
+			return nil, findErr
+		}
+		if existing != nil && existing.Status == domain.ProfileLinkPending {
+			return existing, nil
+		}
+		if existing != nil {
+			return nil, service.ErrProfileAliasInUse
+		}
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return link, nil
+}
+
+func (s *Store) profileLinkForAliases(ctx context.Context, ownerUserID int64, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	normalized := make([]string, 0, len(aliases))
+	seen := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		if alias.NormalizedAlias == "" {
+			continue
+		}
+		if _, ok := seen[alias.NormalizedAlias]; ok {
+			continue
+		}
+		seen[alias.NormalizedAlias] = struct{}{}
+		normalized = append(normalized, alias.NormalizedAlias)
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, 0, len(normalized))
+	args := make([]any, 0, len(normalized)+1)
+	args = append(args, ownerUserID)
+	for i, alias := range normalized {
+		args = append(args, alias)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+2))
+	}
+
+	query := fmt.Sprintf(`
+SELECT l.id, l.invite_token, l.inviter_user_id, l.invitee_user_id, l.status, l.created_at, l.accepted_at, l.revoked_at
+FROM profile_link_aliases a
+JOIN profile_links l ON l.id = a.link_id
+WHERE a.owner_user_id = $1
+  AND a.normalized_alias IN (%s)
+ORDER BY
+  CASE WHEN l.status = 'pending' THEN 0 ELSE 1 END,
+  l.created_at DESC
+LIMIT 1`, strings.Join(placeholders, ", "))
+	link, err := scanProfileLink(s.db.QueryRowContext(ctx, query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return link, nil

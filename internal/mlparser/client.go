@@ -181,7 +181,7 @@ func preferRuleSchedule(result parser.ParseResult, ruleResult parser.ParseResult
 		}
 		result.Warnings = append(result.Warnings, "rule_parser_schedule_used")
 	}
-	if result.Category == nil && ruleResult.Category != nil {
+	if ruleResult.Category != nil {
 		result.Category = ruleResult.Category
 		result.Warnings = append(result.Warnings, "rule_parser_category_used")
 	}

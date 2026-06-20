@@ -679,8 +679,11 @@ func formatProfileLinkError(ctx context.Context, b *Bot, chatID int64, err error
 		return b.sendMessage(ctx, chatID, "Этот инвайт уже использован или закрыт.", nil)
 	case errors.Is(err, service.ErrProfileLinkSelf):
 		return b.sendMessage(ctx, chatID, "Нельзя связать профиль с самим собой.", nil)
+	case errors.Is(err, service.ErrProfileAliasInUse):
+		return b.sendMessage(ctx, chatID, "Такие алиасы уже используются в связке профилей. Посмотри текущие связки через /links или выбери другие алиасы.", nil)
 	default:
-		return err
+		b.logError("profile_link_failed", err, nil)
+		return b.sendMessage(ctx, chatID, "Не смог создать или принять инвайт. Попробуй еще раз чуть позже.", nil)
 	}
 }
 

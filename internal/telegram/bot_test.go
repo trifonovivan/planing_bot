@@ -138,10 +138,49 @@ func TestInviteStillRepliesWhenGetMeFails(t *testing.T) {
 	}
 }
 
+func TestInviteAliasInUseRepliesWithMessage(t *testing.T) {
+	ctx := context.Background()
+	store := &telegramFakeStore{createInviteErr: service.ErrProfileAliasInUse}
+	loc := mustLocation(t)
+	planner := service.New(store, "Europe/Moscow", loc)
+
+	var messages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sendMessage" {
+			t.Fatalf("path = %s, want /sendMessage", r.URL.Path)
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		messages = append(messages, payload.Text)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	bot := New("token", planner, WithBotUsername("iatrifonov_planing_bot"))
+	bot.baseURL = server.URL
+	from := user{ID: 1001, Username: "ivan", FirstName: "Иван"}
+	targetChat := chat{ID: 2002}
+
+	if err := bot.handleMessage(ctx, message{From: from, Chat: targetChat, Text: "/link мама, мам, Таня"}); err != nil {
+		t.Fatalf("handle /link: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	if !strings.Contains(messages[0], "Такие алиасы уже используются") {
+		t.Fatalf("message = %q, want alias-in-use text", messages[0])
+	}
+}
+
 type telegramFakeStore struct {
-	user    *domain.User
-	space   *domain.Workspace
-	invites [][]domain.ProfileLinkAliasInput
+	user            *domain.User
+	space           *domain.Workspace
+	invites         [][]domain.ProfileLinkAliasInput
+	createInviteErr error
 }
 
 func (s *telegramFakeStore) EnsureUser(_ context.Context, tgUser domain.TelegramUser, defaultTimezone string) (*domain.User, error) {
@@ -166,6 +205,9 @@ func (s *telegramFakeStore) EnsurePersonalWorkspace(_ context.Context, userID in
 }
 
 func (s *telegramFakeStore) CreateProfileLinkInvite(_ context.Context, inviterUserID int64, token string, aliases []domain.ProfileLinkAliasInput) (*domain.ProfileLink, error) {
+	if s.createInviteErr != nil {
+		return nil, s.createInviteErr
+	}
 	s.invites = append(s.invites, aliases)
 	return &domain.ProfileLink{ID: int64(len(s.invites)), InviterUserID: inviterUserID, InviteToken: token, Status: domain.ProfileLinkPending}, nil
 }

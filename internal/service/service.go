@@ -23,6 +23,7 @@ var (
 	ErrProfileLinkNotPending = errors.New("profile link is not pending")
 	ErrProfileLinkSelf       = errors.New("cannot link profile to itself")
 	ErrProfileAliasesEmpty   = errors.New("profile aliases are empty")
+	ErrProfileAliasInUse     = errors.New("profile alias is already used")
 	ErrAssigneeNotLinked     = errors.New("assignee is not linked")
 )
 

@@ -137,16 +137,16 @@ func TestClientPrefersRuleScheduleForEndOfMonth(t *testing.T) {
 	}
 }
 
-func TestClientUsesRuleCategoryWhenModelCategoryMissing(t *testing.T) {
+func TestClientPrefersRuleCategoryOverModelCategory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"output": {
-				"title": "написать селф ревью",
+				"title": "собрать задачи",
 				"due_at": null,
 				"remind_at": null,
 				"priority": "p1",
-				"category": null,
+				"category": "garden",
 				"assignee": null,
 				"repeat": null,
 				"status": "success",
@@ -159,7 +159,7 @@ func TestClientUsesRuleCategoryWhenModelCategoryMissing(t *testing.T) {
 
 	loc := mustLocation(t)
 	now := time.Date(2026, 6, 20, 2, 23, 0, 0, loc)
-	result, err := New(server.URL).Parse(context.Background(), "Срочно напсать селф ревью", now, loc)
+	result, err := New(server.URL).Parse(context.Background(), "Собрать задачи", now, loc)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
