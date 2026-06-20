@@ -52,7 +52,7 @@ ML_PARSER_URL=http://parser-model:8090/parse
 ```
 
 `BOT_TOKEN` берется у BotFather. Реальные секреты хранятся только в локальном `.env` или в файлах, переданных через `BOT_TOKEN_FILE` / `DATABASE_URL_FILE`.
-`BOT_USERNAME` опционален: если он задан, бот генерирует полноценные invite-ссылки вида `https://t.me/<bot>?start=link_<token>`. Если не задан, бот показывает код `link_<token>`, который можно принять через `/accept`.
+`BOT_USERNAME` опционален: если он задан, бот генерирует invite-ссылки вида `https://t.me/<bot>?start=link_<token>`. Если не задан, бот попробует определить username через Telegram `getMe`; если Telegram API недоступен, покажет код `link_<token>`, который можно принять через `/accept`.
 
 В коде нет дефолтов для `BOT_TOKEN` и `DATABASE_URL`: приложение не стартует, пока они явно не заданы.
 
@@ -349,7 +349,7 @@ scheduler_iteration_duration_seconds
 /link мама, мам, Таня
 ```
 
-Бот сгенерирует `link_<token>` или deep-link, если задан `BOT_USERNAME`. Второй пользователь открывает ссылку и указывает свои алиасы для пригласившего:
+Бот сгенерирует deep-link вида `https://t.me/<bot>?start=link_<token>`. Если username бота не удалось определить, он покажет код для ручного принятия. Второй пользователь открывает ссылку и указывает свои алиасы для пригласившего:
 
 ```text
 /accept <token> Ваня, Иван, сын

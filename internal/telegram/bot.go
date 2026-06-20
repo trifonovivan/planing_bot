@@ -31,6 +31,7 @@ type Bot struct {
 
 	mu                    sync.Mutex
 	pendingInviteTokens   map[int64]string
+	pendingLinkCreates    map[int64]time.Time
 	pendingClarifications map[int64]pendingClarification
 }
 
@@ -67,6 +68,7 @@ func New(token string, service *service.Service, opts ...Option) *Bot {
 		httpClient:            &http.Client{Timeout: 60 * time.Second},
 		service:               service,
 		pendingInviteTokens:   make(map[int64]string),
+		pendingLinkCreates:    make(map[int64]time.Time),
 		pendingClarifications: make(map[int64]pendingClarification),
 	}
 	for _, opt := range opts {
@@ -150,6 +152,11 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, helpText(), nil)
 	case "/add":
 		return b.sendMessage(ctx, message.Chat.ID, "Напиши задачу обычным текстом, например: завтра в 18:00 оплатить интернет", nil)
+	case "/cancel":
+		b.forgetPendingInvite(user.TelegramID)
+		b.forgetPendingLinkCreate(user.TelegramID)
+		b.forgetClarification(user.TelegramID)
+		return b.sendMessage(ctx, message.Chat.ID, "Ок, отменил.", nil)
 	case "/today":
 		tasks, err := b.service.Today(ctx, user)
 		if err != nil {
@@ -164,13 +171,14 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, formatTaskList("Ближайшие 7 дней", tasks), nil)
 	case "/link", "/invite":
 		if args == "" {
-			return b.sendMessage(ctx, message.Chat.ID, "Напиши алиасы для человека через запятую: /link мама, мам, Таня", nil)
+			b.rememberPendingLinkCreate(user.TelegramID)
+			return b.sendMessage(ctx, message.Chat.ID, "Напиши алиасы для человека через запятую одним сообщением.\n\nНапример: мама, мам, Таня\n\nДля отмены: /cancel", nil)
 		}
 		result, err := b.service.CreateProfileLinkInvite(ctx, user, splitAliases(args))
 		if err != nil {
-			return err
+			return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 		}
-		return b.sendMessage(ctx, message.Chat.ID, formatInvite(result, b.botUsername), nil)
+		return b.sendMessage(ctx, message.Chat.ID, b.formatInvite(ctx, result), nil)
 	case "/accept":
 		token, aliases, ok := parseAcceptArgs(args)
 		if !ok {
@@ -189,11 +197,27 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, formatLinkedProfiles(profiles), nil)
 	default:
 		if token, ok := b.pendingInvite(user.TelegramID); ok {
+			if isCancelText(text) {
+				b.forgetPendingInvite(user.TelegramID)
+				return b.sendMessage(ctx, message.Chat.ID, "Ок, не принимаю инвайт.", nil)
+			}
 			if _, err := b.service.AcceptProfileLinkInvite(ctx, user, token, splitAliases(text)); err != nil {
 				return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 			}
 			b.forgetPendingInvite(user.TelegramID)
 			return b.sendMessage(ctx, message.Chat.ID, "Связка профилей активна. Теперь можно ставить задачи друг другу по алиасам.", nil)
+		}
+		if _, ok := b.pendingLinkCreate(user.TelegramID); ok {
+			if isCancelText(text) {
+				b.forgetPendingLinkCreate(user.TelegramID)
+				return b.sendMessage(ctx, message.Chat.ID, "Ок, не создаю инвайт.", nil)
+			}
+			result, err := b.service.CreateProfileLinkInvite(ctx, user, splitAliases(text))
+			if err != nil {
+				return formatProfileLinkError(ctx, b, message.Chat.ID, err)
+			}
+			b.forgetPendingLinkCreate(user.TelegramID)
+			return b.sendMessage(ctx, message.Chat.ID, b.formatInvite(ctx, result), nil)
 		}
 		if pending, ok := b.pendingClarification(user.TelegramID); ok {
 			return b.handleAssigneeClarification(ctx, message, user, text, pending)
@@ -329,6 +353,25 @@ func (b *Bot) forgetPendingInvite(telegramID int64) {
 	delete(b.pendingInviteTokens, telegramID)
 }
 
+func (b *Bot) rememberPendingLinkCreate(telegramID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pendingLinkCreates[telegramID] = time.Now()
+}
+
+func (b *Bot) pendingLinkCreate(telegramID int64) (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	createdAt, ok := b.pendingLinkCreates[telegramID]
+	return createdAt, ok
+}
+
+func (b *Bot) forgetPendingLinkCreate(telegramID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.pendingLinkCreates, telegramID)
+}
+
 func (b *Bot) rememberClarification(telegramID int64, pending pendingClarification) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -387,6 +430,44 @@ func (b *Bot) answerCallback(ctx context.Context, callbackID string, text string
 		"text":              text,
 	}
 	return b.postJSON(ctx, "answerCallbackQuery", payload, nil)
+}
+
+func (b *Bot) formatInvite(ctx context.Context, result *service.ProfileLinkInviteResult) string {
+	return formatInvite(result, b.resolveBotUsername(ctx))
+}
+
+func (b *Bot) resolveBotUsername(ctx context.Context) string {
+	b.mu.Lock()
+	username := b.botUsername
+	b.mu.Unlock()
+	if username != "" {
+		return username
+	}
+
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      user   `json:"result"`
+	}
+	if err := b.postJSON(ctx, "getMe", map[string]any{}, &resp); err != nil {
+		b.logError("telegram_get_me_failed", err, nil)
+		return ""
+	}
+	if !resp.OK || strings.TrimSpace(resp.Result.Username) == "" {
+		if resp.Description != "" {
+			b.logError("telegram_get_me_failed", fmt.Errorf("%s", resp.Description), nil)
+		}
+		return ""
+	}
+
+	username = strings.TrimPrefix(strings.TrimSpace(resp.Result.Username), "@")
+	b.mu.Lock()
+	if b.botUsername == "" {
+		b.botUsername = username
+	}
+	username = b.botUsername
+	b.mu.Unlock()
+	return username
 }
 
 func (b *Bot) postJSON(ctx context.Context, method string, payload any, out any) error {
@@ -524,11 +605,11 @@ func formatCreatedTask(result *service.CreateTaskResult) string {
 
 func formatInvite(result *service.ProfileLinkInviteResult, botUsername string) string {
 	payload := "link_" + result.Token
-	link := payload
 	if botUsername != "" {
-		link = fmt.Sprintf("https://t.me/%s?start=%s", botUsername, payload)
+		link := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, payload)
+		return fmt.Sprintf("Инвайт создан.\n\nСсылка: %s\n\nЯ буду понимать алиасы: %s\n\nПосле открытия ссылки второй человек должен указать, как будет называть тебя.", link, strings.Join(result.Aliases, ", "))
 	}
-	return fmt.Sprintf("Инвайт создан.\n\nСсылка/код: %s\n\nЯ буду понимать алиасы: %s\n\nПосле открытия ссылки второй человек должен указать, как будет называть тебя.", link, strings.Join(result.Aliases, ", "))
+	return fmt.Sprintf("Инвайт создан.\n\nКод для ручного принятия: %s\n\nПопроси второго человека отправить:\n/accept %s <его алиасы для тебя>\n\nЯ буду понимать алиасы: %s", payload, payload, strings.Join(result.Aliases, ", "))
 }
 
 func formatLinkedProfiles(profiles []domain.LinkedProfile) string {
