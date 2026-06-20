@@ -35,15 +35,17 @@ python -m message_parser.train \
 
 If your local `pip` is old and editable install fails, use `pip install ".[dev]"`.
 
-Current local validation after generating `10000/1200` train/valid rows:
+Current local validation after generating `15000/2000` train/valid rows with holdout titles,
+time phrases, assignees and base times:
 
 ```json
 {
-  "exact_match": 0.9375,
-  "due_at": 0.9933,
-  "remind_at": 0.9942,
-  "title": 0.9942,
-  "repeat": 0.9992
+  "exact_match": 0.6065,
+  "due_at": 0.9195,
+  "remind_at": 0.922,
+  "title": 0.821,
+  "category": 0.8945,
+  "repeat": 0.9955
 }
 ```
 

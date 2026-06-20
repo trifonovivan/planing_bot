@@ -100,7 +100,7 @@ func (s *Scheduler) sendReminders(ctx context.Context, now time.Time) error {
 		return err
 	}
 	for _, notification := range notifications {
-		if err := s.sender.SendChatMessage(ctx, notification.User.TelegramID, formatReminder(notification.Task)); err != nil {
+		if err := s.sender.SendChatMessage(ctx, notification.User.TelegramID, formatReminder(notification.Task, locationForUser(notification.User))); err != nil {
 			return err
 		}
 		if err := s.service.MarkReminderSent(ctx, notification.Reminder.ID, now); err != nil {
@@ -153,10 +153,10 @@ func (s *Scheduler) sendDigests(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-func formatReminder(task domain.Task) string {
+func formatReminder(task domain.Task, location *time.Location) string {
 	text := "🔔 Напоминание\n\n" + task.Title
 	if task.DueAt != nil {
-		text += "\nСрок: " + task.DueAt.Format("02.01.2006 15:04")
+		text += "\nСрок задачи: " + task.DueAt.In(location).Format("02.01.2006 15:04")
 	}
 	return text
 }
@@ -188,9 +188,18 @@ func formatDigest(digest service.DigestNotification) string {
 			builder.WriteString(fmt.Sprintf("\n- %s", task.Title))
 			if task.DueAt != nil {
 				builder.WriteString(" — ")
-				builder.WriteString(task.DueAt.Format("15:04"))
+				builder.WriteString(task.DueAt.In(locationForUser(digest.User)).Format("15:04"))
 			}
 		}
 	}
 	return builder.String()
+}
+
+func locationForUser(user domain.User) *time.Location {
+	if user.Timezone != "" {
+		if location, err := time.LoadLocation(user.Timezone); err == nil {
+			return location
+		}
+	}
+	return time.Local
 }

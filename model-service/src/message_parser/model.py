@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,7 +76,13 @@ class PlanningParserModel:
             due_at, remind_at, source = self._resolve_datetimes(text, base_dt, raw_fields)
             output.due_at = due_at
             output.remind_at = remind_at
-            if output.repeat is not None and not _has_repeat_marker(normalized):
+            explicit_assignee = _explicit_assignee(normalized)
+            if explicit_assignee is not None:
+                output.assignee = explicit_assignee
+            explicit_repeat = _explicit_repeat(normalized)
+            if explicit_repeat is not None:
+                output.repeat = explicit_repeat
+            elif output.repeat is not None and not _has_repeat_marker(normalized):
                 output.repeat = None
             if output.repeat is not None:
                 output.due_at = None
@@ -99,8 +106,12 @@ class PlanningParserModel:
         if explicit_priority is not None:
             output.priority = explicit_priority
 
-        category_unknown = output.category in {None, "unknown"}
-        fallback_category = infer_category(normalized) if category_unknown else None
+        category_confidence = confidences.get("category", 1.0)
+        fallback_category = infer_category(normalized)
+        update_reason = _event_update_reason(normalized)
+        if update_reason is not None:
+            output.status = "needs_clarification"
+            output.clarification_reason = update_reason
 
         if output.status == "success":
             if output.clarification_reason in {"missing_due_at", "vague_due_at"} and output.due_at is None and output.repeat is None:
@@ -110,13 +121,33 @@ class PlanningParserModel:
             elif output.clarification_reason == "assignee_missing" and output.assignee is None:
                 output.status = "partial"
 
-        if output.status == "needs_clarification" and output.clarification_reason == "category_uncertain" and output.title:
-            if fallback_category is not None and (output.due_at is not None or output.repeat is not None):
+        if output.due_at is None:
+            output.remind_at = None
+
+        if output.status == "success" and output.due_at is None and output.repeat is None:
+            output.status = "partial"
+            output.clarification_reason = "missing_due_at"
+
+        if (
+            output.status == "needs_clarification"
+            and output.clarification_reason is None
+            and output.title
+            and (output.due_at is not None or output.repeat is not None)
+            and not _looks_ambiguous_intent(normalized)
+        ):
+            output.status = "success"
+
+        if output.clarification_reason == "category_uncertain" and output.title:
+            if fallback_category is not None:
                 output.category = fallback_category
-                output.status = "success"
                 output.clarification_reason = None
-            else:
+                if output.due_at is not None or output.repeat is not None:
+                    output.status = "success"
+            elif output.status == "needs_clarification":
                 output.status = "partial"
+
+        if fallback_category is not None and category_confidence < 0.95:
+            output.category = fallback_category
 
         if output.category in {None, "unknown"} and output.clarification_reason != "category_uncertain" and fallback_category is not None:
             output.category = fallback_category
@@ -160,6 +191,8 @@ class PlanningParserModel:
             return isoformat(due), isoformat(remind), rule_result.source
 
         due = datetime_from_delta(base_dt, raw_fields.get("due_delta_seconds"))
+        if due is None:
+            return None, None, "none"
         remind = datetime_from_delta(base_dt, raw_fields.get("remind_delta_seconds"))
         return isoformat(due), isoformat(remind), "model_delta" if due is not None else "none"
 
@@ -276,3 +309,73 @@ def _fallback_priority(text: str, output: ParserOutput) -> str:
 
 def _has_repeat_marker(text: str) -> bool:
     return any(marker in text for marker in ("кажд", "раз в", "по будням", "ежеднев", "еженед"))
+
+
+def _explicit_repeat(text: str) -> str | None:
+    if re.search(r"\b(?:каждый месяц|ежемесячно|раз в месяц)\b", text):
+        return "RRULE:FREQ=MONTHLY"
+    if re.search(r"\bкаждое первое число\b", text):
+        return "RRULE:FREQ=MONTHLY;BYMONTHDAY=1"
+    if re.search(r"\bраз в две недели\b", text):
+        return "RRULE:FREQ=WEEKLY;INTERVAL=2"
+    if re.search(r"\bкаждые\s+2\s+дн[яей]*\b", text):
+        return "RRULE:FREQ=DAILY;INTERVAL=2"
+    if re.search(r"\bкаждые\s+3\s+дн[яей]*\b", text):
+        return "RRULE:FREQ=DAILY;INTERVAL=3"
+    if re.search(r"\bпо будням(?:\s+в\s+10)?\b", text):
+        if re.search(r"\bв\s+10\b", text):
+            return "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=10;BYMINUTE=0"
+        return "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    if re.search(r"\bкаждый вторник и четверг\b", text):
+        return "RRULE:FREQ=WEEKLY;BYDAY=TU,TH"
+    if re.search(r"\bкаждый понедельник\b", text):
+        return "RRULE:FREQ=WEEKLY;BYDAY=MO"
+    if re.search(r"\b(?:каждый день в 9 утра|каждое утро)\b", text):
+        return "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+    if re.search(r"\bкаждый день утром\b", text):
+        return "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+    if re.search(r"\bкаждый день вечером\b", text):
+        return "RRULE:FREQ=DAILY;BYHOUR=19;BYMINUTE=0"
+    if re.search(r"\b(?:каждый день|ежедневно)\b", text):
+        return "RRULE:FREQ=DAILY"
+    if re.search(r"\bраз в неделю\b", text):
+        return "RRULE:FREQ=WEEKLY"
+    return None
+
+
+def _explicit_assignee(text: str) -> str | None:
+    assignees = {
+        "иван трифонов": "Иван Трифонов",
+        "мама": "мама",
+        "леша": "Леша",
+        "наташа": "Наташа",
+        "сергей": "Сергей",
+        "родители": "родители",
+        "тетя наташа": "тетя Наташа",
+        "оля": "Оля",
+        "дима": "Дима",
+        "сестра": "сестра",
+        "бабушка": "бабушка",
+    }
+    for marker, assignee in sorted(assignees.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"\b{re.escape(marker)}\b", text):
+            return assignee
+    return None
+
+
+def _event_update_reason(text: str) -> str | None:
+    if re.search(r"\b(?:перенеси|перенести|перенес|сдвинь|сдвинуть|отмени|отменить|удали|удалить)\b", text):
+        return "missing_target_event"
+    return None
+
+
+def _looks_ambiguous_intent(text: str) -> bool:
+    if any(marker in text for marker in ("на днях", "когда получится", "когда проснусь", "что-нибудь", "штук")):
+        return True
+    if "вчера" in text and any(marker in text for marker in ("сегодня", "завтра")):
+        return True
+    weekday_mentions = re.findall(
+        r"\b(?:в|во|до|к|на)\s+(?:понедельник[а]?|вторник[а]?|сред[уаы]?|четверг[а]?|пятниц[уаы]?|суббот[уаы]?|воскресень[ея])\b",
+        text,
+    )
+    return len(weekday_mentions) > 1

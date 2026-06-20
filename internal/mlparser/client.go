@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"planing_bot/internal/domain"
+	appmetrics "planing_bot/internal/metrics"
 	"planing_bot/internal/parser"
 )
 
@@ -22,6 +23,7 @@ var ErrModelRejectedMessage = errors.New("ml parser rejected message")
 type Client struct {
 	endpoint   string
 	httpClient *http.Client
+	metrics    *appmetrics.Registry
 }
 
 type Option func(*Client)
@@ -51,6 +53,14 @@ type parserOutput struct {
 	ClarificationReason *string `json:"clarification_reason"`
 }
 
+func (r parseResponse) metricStatus() string {
+	status := strings.TrimSpace(r.Output.Status)
+	if status == "" {
+		return "empty_status"
+	}
+	return status
+}
+
 func New(endpoint string, opts ...Option) *Client {
 	client := &Client{
 		endpoint: strings.TrimSpace(endpoint),
@@ -72,6 +82,12 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	}
 }
 
+func WithMetrics(registry *appmetrics.Registry) Option {
+	return func(c *Client) {
+		c.metrics = registry
+	}
+}
+
 func (c *Client) Parse(ctx context.Context, text string, now time.Time, location *time.Location) (parser.ParseResult, error) {
 	if strings.TrimSpace(c.endpoint) == "" {
 		return fallbackParse(text, now, location, "ml_parser_not_configured")
@@ -79,46 +95,97 @@ func (c *Client) Parse(ctx context.Context, text string, now time.Time, location
 	if location == nil {
 		location = time.Local
 	}
+	ruleResult, ruleErr := parser.Parse(text, now, location)
 
+	requestStart := time.Now()
 	body, err := json.Marshal(parseRequest{
 		Text:     text,
 		BaseTime: now.In(location).Format(time.RFC3339),
 	})
 	if err != nil {
+		c.observeRequest(requestStart, "fallback", "marshal_error", "")
 		return fallbackParse(text, now, location, "ml_parser_request_marshal_failed")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
+		c.observeRequest(requestStart, "fallback", "request_error", "")
 		return fallbackParse(text, now, location, "ml_parser_request_create_failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.observeRequest(requestStart, "fallback", "transport_error", "")
 		return fallbackParse(text, now, location, "ml_parser_http_failed: "+err.Error())
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		c.observeRequest(requestStart, "fallback", fmt.Sprintf("http_%d", resp.StatusCode), "")
 		return fallbackParse(text, now, location, fmt.Sprintf("ml_parser_http_status_%d", resp.StatusCode))
 	}
 
 	limited := io.LimitReader(resp.Body, 1<<20)
 	var parsed parseResponse
 	if err := json.NewDecoder(limited).Decode(&parsed); err != nil {
+		c.observeRequest(requestStart, "fallback", "decode_error", "")
 		return fallbackParse(text, now, location, "ml_parser_decode_failed: "+err.Error())
 	}
 
 	result, err := parsed.toParseResult(location)
 	if err != nil {
+		c.observeRequest(requestStart, "rejected", parsed.metricStatus(), parsed.TimeSource)
 		return result, err
 	}
+	result = preferRuleSchedule(result, ruleResult, ruleErr)
 	result.Warnings = append(result.Warnings, "ml_parser_used")
 	if parsed.TimeSource != "" {
 		result.Warnings = append(result.Warnings, "ml_parser_time_source: "+parsed.TimeSource)
 	}
+	c.observeRequest(requestStart, "success", parsed.metricStatus(), parsed.TimeSource)
 	return result, nil
+}
+
+func (c *Client) observeRequest(start time.Time, result string, status string, timeSource string) {
+	if c.metrics == nil {
+		return
+	}
+	labels := appmetrics.Labels{
+		"result":      metricLabelValue(result, "unknown"),
+		"status":      metricLabelValue(status, "unknown"),
+		"time_source": metricLabelValue(timeSource, "none"),
+	}
+	c.metrics.Inc("ml_parser_request_total", labels)
+	c.metrics.ObserveDuration("ml_parser_request_duration_seconds", labels, start)
+}
+
+func metricLabelValue(value string, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
+}
+
+func preferRuleSchedule(result parser.ParseResult, ruleResult parser.ParseResult, ruleErr error) parser.ParseResult {
+	if ruleErr != nil {
+		return result
+	}
+	if ruleResult.DueAt != nil {
+		result.DueAt = ruleResult.DueAt
+		result.RemindAt = ruleResult.RemindAt
+		if ruleResult.RecurrenceRule != nil {
+			result.RecurrenceRule = ruleResult.RecurrenceRule
+		}
+		result.Warnings = append(result.Warnings, "rule_parser_schedule_used")
+	}
+	if result.Category == nil && ruleResult.Category != nil {
+		result.Category = ruleResult.Category
+		result.Warnings = append(result.Warnings, "rule_parser_category_used")
+	}
+	return result
 }
 
 func (r parseResponse) toParseResult(location *time.Location) (parser.ParseResult, error) {

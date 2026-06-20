@@ -282,10 +282,28 @@ func (b *Bot) handleCallback(ctx context.Context, callback callbackQuery) error 
 		if err := b.answerCallback(ctx, callback.ID, "Перенесено"); err != nil {
 			return err
 		}
-		text := "⏰ Перенесено: " + task.Title + "\nСрок: " + formatOptionalTime(task.DueAt)
+		text := "⏰ Задача перенесена: " + task.Title +
+			"\nСрок задачи: " + formatOptionalTime(task.DueAt) +
+			"\nНапоминание: " + formatOptionalTime(task.RemindAt)
 		if task.PostponedCount >= 5 {
 			text += fmt.Sprintf("\n\nЗадача переносилась уже %d раз. Возможно, её стоит удалить или разбить.", task.PostponedCount)
 		}
+		return b.sendMessage(ctx, callback.Message.Chat.ID, text, taskKeyboard(task.ID))
+	case "reminder":
+		b.incCallback("reminder")
+		if len(parts) != 3 {
+			return b.answerCallback(ctx, callback.ID, "Не понял перенос напоминания")
+		}
+		task, err := b.service.PostponeReminder(ctx, user, taskID, parts[2])
+		if err != nil {
+			return err
+		}
+		if err := b.answerCallback(ctx, callback.ID, "Напоминание перенесено"); err != nil {
+			return err
+		}
+		text := "🔔 Напоминание перенесено: " + task.Title +
+			"\nНапомнить: " + formatOptionalTime(task.RemindAt) +
+			"\nСрок задачи: " + formatOptionalTime(task.DueAt)
 		return b.sendMessage(ctx, callback.Message.Chat.ID, text, taskKeyboard(task.ID))
 	default:
 		return b.answerCallback(ctx, callback.ID, "Неизвестное действие")
@@ -498,8 +516,8 @@ func formatCreatedTask(result *service.CreateTaskResult) string {
 Название: %s
 Исполнитель: %s
 Повтор: %s
-Срок: %s
-Напомнить: %s
+Срок задачи: %s
+Напоминание: %s
 Приоритет: %s
 Категория: %s`, task.Title, assignee, formatRecurrence(task.RecurrenceRule), formatOptionalTime(task.DueAt), formatOptionalTime(task.RemindAt), task.Priority, category)
 }
@@ -619,9 +637,12 @@ func taskKeyboard(taskID int64) map[string]any {
 				{"text": "❌ Отменить", "callback_data": fmt.Sprintf("cancel:%d", taskID)},
 			},
 			{
-				{"text": "⏰ Завтра", "callback_data": fmt.Sprintf("postpone:%d:tomorrow", taskID)},
-				{"text": "⏰ 3 дня", "callback_data": fmt.Sprintf("postpone:%d:3d", taskID)},
-				{"text": "⏰ Неделя", "callback_data": fmt.Sprintf("postpone:%d:week", taskID)},
+				{"text": "🔔 Через час", "callback_data": fmt.Sprintf("reminder:%d:1h", taskID)},
+				{"text": "🔔 Завтра", "callback_data": fmt.Sprintf("reminder:%d:tomorrow", taskID)},
+			},
+			{
+				{"text": "🔔 3 дня", "callback_data": fmt.Sprintf("reminder:%d:3d", taskID)},
+				{"text": "🔔 Неделя", "callback_data": fmt.Sprintf("reminder:%d:week", taskID)},
 			},
 		},
 	}
