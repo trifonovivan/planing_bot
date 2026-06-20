@@ -176,6 +176,71 @@ func TestInviteAliasInUseRepliesWithMessage(t *testing.T) {
 	}
 }
 
+func TestSendCreatedTaskMessagesNotifiesAssignee(t *testing.T) {
+	ctx := context.Background()
+	dueAt := time.Date(2026, 6, 20, 18, 0, 0, 0, mustLocation(t))
+	result := &service.CreateTaskResult{
+		Task: domain.Task{
+			ID:        77,
+			Title:     "купить молоко",
+			Priority:  domain.PriorityP2,
+			DueAt:     &dueAt,
+			RemindAt:  &dueAt,
+			CreatedAt: dueAt,
+		},
+		Creator: domain.User{ID: 1, TelegramID: 1001, FirstName: "Иван"},
+		Assignee: domain.User{
+			ID:         2,
+			TelegramID: 2002,
+			FirstName:  "Таня",
+		},
+	}
+
+	var messages []struct {
+		ChatID int64
+		Text   string
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sendMessage" {
+			t.Fatalf("path = %s, want /sendMessage", r.URL.Path)
+		}
+		var payload struct {
+			ChatID int64  `json:"chat_id"`
+			Text   string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		messages = append(messages, struct {
+			ChatID int64
+			Text   string
+		}{ChatID: payload.ChatID, Text: payload.Text})
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	bot := New("token", nil)
+	bot.baseURL = server.URL
+
+	if err := bot.sendCreatedTaskMessages(ctx, 1001, result); err != nil {
+		t.Fatalf("sendCreatedTaskMessages error: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(messages))
+	}
+	if messages[0].ChatID != 1001 || !strings.Contains(messages[0].Text, "Задача создана") {
+		t.Fatalf("creator message = %+v", messages[0])
+	}
+	if messages[1].ChatID != 2002 {
+		t.Fatalf("assignee chat = %d, want 2002", messages[1].ChatID)
+	}
+	for _, want := range []string{"На тебя поставлена задача", "От: Иван", "Название: купить молоко"} {
+		if !strings.Contains(messages[1].Text, want) {
+			t.Fatalf("assignee message = %q, want %q", messages[1].Text, want)
+		}
+	}
+}
+
 type telegramFakeStore struct {
 	user            *domain.User
 	space           *domain.Workspace

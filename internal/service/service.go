@@ -71,6 +71,7 @@ type ruleTextParser struct{}
 type CreateTaskResult struct {
 	Task       domain.Task
 	Parse      parser.ParseResult
+	Creator    domain.User
 	Assignee   domain.User
 	Resolution assignee.Resolution
 }
@@ -318,7 +319,7 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 		}
 		assigneeUser = *recipient
 	}
-	return &CreateTaskResult{Task: task, Parse: parsed, Assignee: assigneeUser, Resolution: resolution}, nil
+	return &CreateTaskResult{Task: task, Parse: parsed, Creator: *user, Assignee: assigneeUser, Resolution: resolution}, nil
 }
 
 func (ruleTextParser) Parse(_ context.Context, text string, now time.Time, location *time.Location) (parser.ParseResult, error) {

@@ -240,7 +240,7 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		if err != nil {
 			return err
 		}
-		return b.sendMessage(ctx, message.Chat.ID, formatCreatedTask(result), taskKeyboard(result.Task.ID))
+		return b.sendCreatedTaskMessages(ctx, message.Chat.ID, result)
 	}
 }
 
@@ -261,7 +261,7 @@ func (b *Bot) handleAssigneeClarification(ctx context.Context, message message, 
 		return err
 	}
 	b.forgetClarification(user.TelegramID)
-	return b.sendMessage(ctx, message.Chat.ID, formatCreatedTask(result), taskKeyboard(result.Task.ID))
+	return b.sendCreatedTaskMessages(ctx, message.Chat.ID, result)
 }
 
 func (b *Bot) handleCallback(ctx context.Context, callback callbackQuery) error {
@@ -424,6 +424,24 @@ func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string, replyM
 		payload["reply_markup"] = replyMarkup
 	}
 	return b.postJSON(ctx, "sendMessage", payload, nil)
+}
+
+func (b *Bot) sendCreatedTaskMessages(ctx context.Context, creatorChatID int64, result *service.CreateTaskResult) error {
+	if err := b.sendMessage(ctx, creatorChatID, formatCreatedTask(result), taskKeyboard(result.Task.ID)); err != nil {
+		return err
+	}
+	if !shouldNotifyAssignee(result) {
+		return nil
+	}
+	return b.sendMessage(ctx, result.Assignee.TelegramID, formatAssignedTask(result), taskKeyboard(result.Task.ID))
+}
+
+func shouldNotifyAssignee(result *service.CreateTaskResult) bool {
+	return result != nil &&
+		result.Creator.ID != 0 &&
+		result.Assignee.ID != 0 &&
+		result.Creator.ID != result.Assignee.ID &&
+		result.Assignee.TelegramID != 0
 }
 
 func (b *Bot) answerCallback(ctx context.Context, callbackID string, text string) error {
@@ -629,6 +647,18 @@ func formatCreatedTask(result *service.CreateTaskResult) string {
 Напоминание: %s
 Приоритет: %s
 Категория: %s`, task.Title, assignee, formatRecurrence(task.RecurrenceRule), formatOptionalTime(task.DueAt), formatOptionalTime(task.RemindAt), task.Priority, category)
+}
+
+func formatAssignedTask(result *service.CreateTaskResult) string {
+	task := result.Task
+	return fmt.Sprintf(`📌 На тебя поставлена задача
+
+От: %s
+Название: %s
+Повтор: %s
+Срок задачи: %s
+Напоминание: %s
+Приоритет: %s`, formatUserName(result.Creator), task.Title, formatRecurrence(task.RecurrenceRule), formatOptionalTime(task.DueAt), formatOptionalTime(task.RemindAt), task.Priority)
 }
 
 func formatInvite(result *service.ProfileLinkInviteResult, botUsername string) string {
