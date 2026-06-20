@@ -1,0 +1,129 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy over SSH
+    runs-on: ubuntu-latest
+    if: vars.DEPLOY_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'))
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/planner-bot' }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'planner' }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'planner' }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DEFAULT_TIMEZONE: ${{ vars.DEFAULT_TIMEZONE || 'Europe/Moscow' }}
+      DIGEST_TIME: ${{ vars.DIGEST_TIME || '09:30' }}
+      METRICS_ENABLED: ${{ vars.METRICS_ENABLED || 'true' }}
+      METRICS_BIND: ${{ vars.METRICS_BIND || '127.0.0.1:8080' }}
+      ML_PARSER_URL: ${{ vars.ML_PARSER_URL || 'http://parser-model:8090/parse' }}
+      PARSER_MODEL_BIND: ${{ vars.PARSER_MODEL_BIND || '127.0.0.1:8090' }}
+      PUBLIC_HOST: ${{ vars.PUBLIC_HOST || secrets.DEPLOY_HOST }}
+      HTTP_BIND: ${{ vars.HTTP_BIND || '0.0.0.0:80' }}
+      GRAFANA_ADMIN_USER: ${{ vars.GRAFANA_ADMIN_USER || 'admin' }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+      MONITORING_HTPASSWD: ${{ secrets.MONITORING_HTPASSWD }}
+      PROMETHEUS_RETENTION: ${{ vars.PROMETHEUS_RETENTION || '15d' }}
+      LOKI_RETENTION: ${{ vars.LOKI_RETENTION || '168h' }}
+      NODE_EXPORTER_VERSION: ${{ vars.NODE_EXPORTER_VERSION || 'latest' }}
+      CADVISOR_VERSION: ${{ vars.CADVISOR_VERSION || 'latest' }}
+    steps:
+      - name: Checkout workflow run commit
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout selected commit
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      - name: Validate deploy configuration
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$BOT_TOKEN"
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$DATABASE_URL"
+          test -n "$GRAFANA_ADMIN_PASSWORD"
+          test -n "$MONITORING_HTPASSWD"
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Prepare remote env
+        run: |
+          cat > .deploy.env <<EOF
+          BOT_TOKEN=$BOT_TOKEN
+          POSTGRES_USER=$POSTGRES_USER
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          POSTGRES_DB=$POSTGRES_DB
+          DATABASE_URL=$DATABASE_URL
+          APP_ENV=production
+          DEFAULT_TIMEZONE=$DEFAULT_TIMEZONE
+          DIGEST_TIME=$DIGEST_TIME
+          METRICS_ENABLED=$METRICS_ENABLED
+          METRICS_BIND=$METRICS_BIND
+          ML_PARSER_URL=$ML_PARSER_URL
+          PARSER_MODEL_BIND=$PARSER_MODEL_BIND
+          PUBLIC_HOST=$PUBLIC_HOST
+          HTTP_BIND=$HTTP_BIND
+          GRAFANA_ADMIN_USER=$GRAFANA_ADMIN_USER
+          GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
+          PROMETHEUS_RETENTION=$PROMETHEUS_RETENTION
+          LOKI_RETENTION=$LOKI_RETENTION
+          NODE_EXPORTER_VERSION=$NODE_EXPORTER_VERSION
+          CADVISOR_VERSION=$CADVISOR_VERSION
+          EOF
+
+          printf '%s\n' "$MONITORING_HTPASSWD" > .monitoring.htpasswd
+
+      - name: Pack release
+        run: |
+          tar \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='.deploy.env' \
+            --exclude='.monitoring.htpasswd' \
+            --exclude='.idea' \
+            --exclude='tmp' \
+            --exclude='model-service/.venv' \
+            --exclude='model-service/.pytest_cache' \
+            --exclude='model-service/datasets/**/*.jsonl' \
+            --exclude='model-service/artifacts/*' \
+            -czf "$RUNNER_TEMP/release.tar.gz" .
+
+      - name: Upload release
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$RUNNER_TEMP/release.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/release.tar.gz"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .deploy.env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" .monitoring.htpasswd "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.htpasswd"
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && tar -xzf release.tar.gz && rm release.tar.gz && cp deploy/docker-compose.prod.yml docker-compose.yml && if ! test -f model-service/artifacts/planning_ru_model.joblib; then echo 'Missing model-service/artifacts/planning_ru_model.joblib. Run the Model train workflow with deploy_to_server=true first.'; exit 1; fi && docker compose up -d --build --force-recreate --remove-orphans && docker image prune -f"

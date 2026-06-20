@@ -92,12 +92,27 @@ docker run --rm -p 8090:8090 \
 
 ## Deployment
 
-Training is not wired into CI/CD on purpose. Model training is a data job: it should be run manually or by a separate scheduled workflow, reviewed by metrics, and only then uploaded.
+Training is wired into a separate GitHub Actions workflow on purpose. Model training is a data job: it is isolated from the app deploy pipeline, reviewed by evaluation metrics, and only then uploaded.
 
-Typical upload after local training:
+Typical upload after local training, if you need to do it outside GitHub Actions:
 
 ```bash
 scp model-service/artifacts/planning_ru_model.joblib <user>@<host>:/opt/planner-bot/model-service/artifacts/
 ```
 
-Then restart only the model service container on the server.
+Then restart only the model service container on the server:
+
+```bash
+cd /opt/planner-bot
+docker compose restart parser-model
+```
+
+Preferred production flow:
+
+1. Open GitHub Actions.
+2. Run `Model train`.
+3. Review `evaluation.json`.
+4. Re-run with `deploy_to_server=true` when the model is good enough for production.
+
+That workflow uploads `model-service`, uploads the trained artifact, rebuilds the
+`parser-model` image, and restarts only that container.

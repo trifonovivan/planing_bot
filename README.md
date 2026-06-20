@@ -142,9 +142,13 @@ docker compose -f deploy/docker-compose.prod.yml config
 
 ## CI/CD
 
-GitHub Actions workflow лежит в `.github/workflows/ci-cd.yml`.
+GitHub Actions разнесены на независимые workflows:
 
-На `pull_request` в `main` workflow:
+- `CI` (`.github/workflows/ci.yml`) проверяет Go-приложение и сборку app Docker image
+- `Model train` (`.github/workflows/model-train.yml`) проверяет, обучает и оценивает ML parser model
+- `Deploy` (`.github/workflows/deploy.yml`) выкладывает приложение на VPS после успешного `CI`
+
+`CI` запускается на `pull_request` и `push` в `main`, когда меняется Go-приложение, миграции, Docker/compose или deploy-конфиги:
 
 - ставит Go-версию из `go.mod`
 - скачивает зависимости
@@ -152,12 +156,28 @@ GitHub Actions workflow лежит в `.github/workflows/ci-cd.yml`.
 - запускает `go vet ./...`
 - проверяет сборку Docker-образа
 
-На `push` в `main` или git tag вида `v*.*.*` workflow дополнительно публикует Docker-образ в GHCR:
+`Model train` запускается отдельно от app deploy:
+
+- на `pull_request`/`push` с изменениями в `model-service/**`
+- вручную через GitHub Actions `Run workflow`
+- генерирует synthetic dataset
+- запускает Python-тесты
+- обучает `artifacts/planning_ru_model.joblib`
+- прогоняет evaluation и проверяет `exact_match` против порога
+- сохраняет `.joblib` и `evaluation.json` как GitHub artifact
+- при ручном запуске с `deploy_to_server=true` загружает `model-service` source и `.joblib` на VPS, пересобирает и перезапускает только `parser-model`
+
+Сам `.joblib` в git не хранится.
+
+Пример ручного переобучения без деплоя модели:
 
 ```text
-ghcr.io/trifonovivan/planing_bot:main
-ghcr.io/trifonovivan/planing_bot:latest
-ghcr.io/trifonovivan/planing_bot:sha-<commit>
+Actions -> Model train -> Run workflow
+train_rows=10000
+valid_rows=1200
+seed=424242
+min_exact_match=0.55
+deploy_to_server=false
 ```
 
 CD включается отдельно через repository variable:
@@ -166,8 +186,9 @@ CD включается отдельно через repository variable:
 DEPLOY_ENABLED=true
 ```
 
-Когда `DEPLOY_ENABLED=true`, push в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует исходники, обновляет `.env`, собирает образ на сервере и выполняет `docker compose up -d --build --force-recreate --remove-orphans`.
-Перед упаковкой релиза workflow генерирует обучающий датасет для `model-service`, обучает `artifacts/planning_ru_model.joblib`, прогоняет evaluation и кладет готовый артефакт модели в release archive. Сам `.joblib` в git не хранится.
+Когда `DEPLOY_ENABLED=true`, успешный `CI` после `push` в `main` деплоит сервис по SSH на сервер с установленными Docker и Docker Compose plugin. Workflow копирует исходники, обновляет `.env`, собирает образ на сервере и выполняет `docker compose up -d --build --force-recreate --remove-orphans`.
+
+Deploy больше не обучает модель. На сервере должен существовать `model-service/artifacts/planning_ru_model.joblib`; обновление этого файла делает отдельный workflow `Model train`.
 
 Production compose дополнительно поднимает observability-контур:
 
@@ -212,6 +233,7 @@ PROMETHEUS_RETENTION=15d
 LOKI_RETENTION=168h
 NODE_EXPORTER_VERSION=latest
 CADVISOR_VERSION=latest
+MODEL_MIN_EXACT_MATCH=0.55
 ```
 
 Если нужно проверить production compose локально из корня репозитория:

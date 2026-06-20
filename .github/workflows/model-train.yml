@@ -1,0 +1,173 @@
+name: Model train
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/model-train.yml"
+      - "model-service/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/model-train.yml"
+      - "model-service/**"
+  workflow_dispatch:
+    inputs:
+      train_rows:
+        description: "How many synthetic rows to generate for train.jsonl"
+        required: true
+        default: "10000"
+      valid_rows:
+        description: "How many synthetic rows to generate for valid.jsonl"
+        required: true
+        default: "1200"
+      seed:
+        description: "Dataset generation seed"
+        required: true
+        default: "424242"
+      min_exact_match:
+        description: "Minimum exact_match required to accept the trained model"
+        required: true
+        default: "0.55"
+      deploy_to_server:
+        description: "Upload the trained artifact to the VPS and restart parser-model"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-train-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TRAIN_ROWS: ${{ github.event.inputs.train_rows || '10000' }}
+  VALID_ROWS: ${{ github.event.inputs.valid_rows || '1200' }}
+  DATASET_SEED: ${{ github.event.inputs.seed || '424242' }}
+  MIN_EXACT_MATCH: ${{ github.event.inputs.min_exact_match || vars.MODEL_MIN_EXACT_MATCH || '0.55' }}
+  MODEL_ARTIFACT: planning_ru_model.joblib
+
+jobs:
+  train:
+    name: Test, train and evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: model-service/pyproject.toml
+
+      - name: Install dependencies
+        working-directory: model-service
+        run: pip install ".[dev]"
+
+      - name: Run tests
+        working-directory: model-service
+        run: PYTHONPATH=src pytest tests
+
+      - name: Generate dataset
+        working-directory: model-service
+        run: |
+          python scripts/generate_planning_dataset.py \
+            --out . \
+            --seed "$DATASET_SEED" \
+            --train "$TRAIN_ROWS" \
+            --valid "$VALID_ROWS"
+
+      - name: Train model
+        working-directory: model-service
+        run: |
+          PYTHONPATH=src python -m message_parser.train \
+            --train-file datasets/planning_ru/train.jsonl \
+            --valid-file datasets/planning_ru/valid.jsonl \
+            --model-out "artifacts/$MODEL_ARTIFACT"
+
+      - name: Evaluate model
+        working-directory: model-service
+        run: |
+          PYTHONPATH=src python -m message_parser.evaluate \
+            --model "artifacts/$MODEL_ARTIFACT" \
+            --valid-file datasets/planning_ru/valid.jsonl \
+            | tee artifacts/evaluation.json
+          python -c 'import json, os; metrics = json.load(open("artifacts/evaluation.json")); threshold = float(os.environ["MIN_EXACT_MATCH"]); actual = float(metrics["exact_match"]); print(f"exact_match={actual:.4f}, threshold={threshold:.4f}"); raise SystemExit(0 if actual >= threshold else 1)'
+
+      - name: Build model service image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./model-service
+          push: false
+          tags: planner-parser-model:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload trained model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: planner-parser-model-${{ github.sha }}
+          path: |
+            model-service/artifacts/planning_ru_model.joblib
+            model-service/artifacts/evaluation.json
+          retention-days: 14
+
+  deploy-model:
+    name: Deploy model artifact
+    runs-on: ubuntu-latest
+    needs:
+      - train
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_server == 'true'
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/planner-bot' }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      MODEL_ARTIFACT: planning_ru_model.joblib
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download trained model artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: planner-parser-model-${{ github.sha }}
+          path: model-release
+
+      - name: Validate deploy configuration
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Pack model service source
+        run: |
+          tar \
+            --exclude='model-service/.venv' \
+            --exclude='model-service/.pytest_cache' \
+            --exclude='model-service/datasets/**/*.jsonl' \
+            --exclude='model-service/artifacts/*' \
+            -czf "$RUNNER_TEMP/model-service.tar.gz" model-service
+
+      - name: Upload model service and restart parser
+        run: |
+          test -f "model-release/$MODEL_ARTIFACT"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$RUNNER_TEMP/model-service.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/model-service.tar.gz"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && tar -xzf model-service.tar.gz && rm model-service.tar.gz && mkdir -p model-service/artifacts"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "model-release/$MODEL_ARTIFACT" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/model-service/artifacts/$MODEL_ARTIFACT"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "model-release/evaluation.json" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/model-service/artifacts/evaluation.json"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose up -d --build --force-recreate --no-deps parser-model && docker compose ps parser-model"
