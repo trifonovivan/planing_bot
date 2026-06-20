@@ -535,6 +535,15 @@ func TestMessageVariantsCorpus(t *testing.T) {
 			wantPrio:   domain.PriorityP3,
 			wantCat:    "Финансы",
 		},
+		{
+			name:       "end of month",
+			text:       "В конце месяца оплатить инет",
+			wantTitle:  "оплатить инет",
+			wantDue:    time.Date(2026, 6, 30, 23, 59, 0, 0, loc),
+			wantRemind: time.Date(2026, 6, 30, 10, 0, 0, 0, loc),
+			wantPrio:   domain.PriorityP3,
+			wantCat:    "Финансы",
+		},
 	}
 
 	for _, tt := range tests {

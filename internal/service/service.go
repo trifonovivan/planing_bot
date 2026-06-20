@@ -268,6 +268,7 @@ func (s *Service) createTaskForResolvedAssignee(ctx context.Context, user *domai
 		})
 		return nil, err
 	}
+	parsed = normalizeParsedSchedule(parsed, s.now().In(location), location)
 
 	status := domain.StatusNew
 	if parsed.DueAt != nil {
@@ -328,10 +329,12 @@ func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, task
 	if err != nil {
 		return nil, err
 	}
+	location := s.locationForUser(user)
 	currentTask, err := s.store.TaskByID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
+	currentTask = taskInLocation(currentTask, location)
 	if currentTask.RecurrenceRule != nil {
 		now := s.now()
 		if currentTask.RemindAt != nil {
@@ -346,6 +349,7 @@ func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, task
 		if err := s.store.CreateTaskEvent(ctx, taskID, user.ID, "recurring_done", emptyPayload()); err != nil {
 			return nil, fmt.Errorf("create task event: %w", err)
 		}
+		task = taskInLocation(task, location)
 		s.incTaskMetric("task_done_total", *task, user.ID)
 		s.logInfo("done_task", taskLogFields(*task, user.ID))
 		return task, nil
@@ -354,6 +358,7 @@ func (s *Service) MarkDone(ctx context.Context, tgUser domain.TelegramUser, task
 	if err != nil {
 		return nil, fmt.Errorf("mark task done: %w", err)
 	}
+	task = taskInLocation(task, location)
 	if err := s.store.CreateTaskEvent(ctx, taskID, user.ID, "done", emptyPayload()); err != nil {
 		return nil, fmt.Errorf("create task event: %w", err)
 	}
@@ -367,10 +372,12 @@ func (s *Service) Cancel(ctx context.Context, tgUser domain.TelegramUser, taskID
 	if err != nil {
 		return nil, err
 	}
+	location := s.locationForUser(user)
 	task, err := s.store.UpdateTaskStatus(ctx, taskID, user.ID, domain.StatusCancelled, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("cancel task: %w", err)
 	}
+	task = taskInLocation(task, location)
 	if err := s.store.CreateTaskEvent(ctx, taskID, user.ID, "cancelled", emptyPayload()); err != nil {
 		return nil, fmt.Errorf("create task event: %w", err)
 	}
@@ -384,17 +391,19 @@ func (s *Service) Postpone(ctx context.Context, tgUser domain.TelegramUser, task
 	if err != nil {
 		return nil, err
 	}
+	location := s.locationForUser(user)
 
 	task, err := s.store.TaskByID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
+	task = taskInLocation(task, location)
 	shift, err := postponeShift(option)
 	if err != nil {
 		return nil, err
 	}
 
-	now := s.now().In(s.locationForUser(user))
+	now := s.now().In(location)
 	var dueAt *time.Time
 	if task.DueAt != nil {
 		next := task.DueAt.Add(shift)
@@ -420,7 +429,11 @@ func (s *Service) Postpone(ctx context.Context, tgUser domain.TelegramUser, task
 	if err != nil {
 		return nil, fmt.Errorf("postpone task: %w", err)
 	}
+	updated = taskInLocation(updated, location)
 	if remindAt != nil {
+		if err := s.store.MarkTaskRemindersSentBefore(ctx, taskID, remindAt.Add(time.Nanosecond), now); err != nil {
+			return nil, fmt.Errorf("mark previous reminders sent: %w", err)
+		}
 		if err := s.store.CreateTaskReminder(ctx, taskID, *remindAt); err != nil {
 			return nil, fmt.Errorf("create task reminder: %w", err)
 		}
@@ -439,6 +452,51 @@ func (s *Service) Postpone(ctx context.Context, tgUser domain.TelegramUser, task
 	return updated, nil
 }
 
+func (s *Service) PostponeReminder(ctx context.Context, tgUser domain.TelegramUser, taskID int64, option string) (*domain.Task, error) {
+	user, _, err := s.RegisterUser(ctx, tgUser)
+	if err != nil {
+		return nil, err
+	}
+	location := s.locationForUser(user)
+	task, err := s.store.TaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	task = taskInLocation(task, location)
+	shift, err := postponeShift(option)
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.now().In(location)
+	base := now
+	if task.RemindAt != nil && task.RemindAt.After(now) {
+		base = *task.RemindAt
+	}
+	remindAt := base.Add(shift)
+	updated, err := s.store.UpdateTaskSchedule(ctx, taskID, user.ID, task.DueAt, &remindAt, s.now())
+	if err != nil {
+		return nil, fmt.Errorf("postpone reminder: %w", err)
+	}
+	updated = taskInLocation(updated, location)
+	if err := s.store.MarkTaskRemindersSentBefore(ctx, taskID, remindAt.Add(time.Nanosecond), now); err != nil {
+		return nil, fmt.Errorf("mark previous reminders sent: %w", err)
+	}
+	if err := s.store.CreateTaskReminder(ctx, taskID, remindAt); err != nil {
+		return nil, fmt.Errorf("create task reminder: %w", err)
+	}
+	if err := s.store.CreateTaskEvent(ctx, taskID, user.ID, "reminder_postponed", map[string]any{
+		"option":    option,
+		"remind_at": nullableTime(&remindAt),
+	}); err != nil {
+		return nil, fmt.Errorf("create task event: %w", err)
+	}
+	fields := taskLogFields(*updated, user.ID)
+	fields["option"] = option
+	s.logInfo("postpone_reminder", fields)
+	return updated, nil
+}
+
 func (s *Service) Today(ctx context.Context, tgUser domain.TelegramUser) ([]domain.Task, error) {
 	user, _, err := s.RegisterUser(ctx, tgUser)
 	if err != nil {
@@ -448,7 +506,11 @@ func (s *Service) Today(ctx context.Context, tgUser domain.TelegramUser) ([]doma
 	now := s.now().In(location)
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 	end := start.AddDate(0, 0, 1)
-	return s.store.TasksForRange(ctx, user.ID, start, end)
+	tasks, err := s.store.TasksForRange(ctx, user.ID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return tasksInLocation(tasks, location), nil
 }
 
 func (s *Service) Week(ctx context.Context, tgUser domain.TelegramUser) ([]domain.Task, error) {
@@ -460,14 +522,27 @@ func (s *Service) Week(ctx context.Context, tgUser domain.TelegramUser) ([]domai
 	now := s.now().In(location)
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 	end := start.AddDate(0, 0, 7)
-	return s.store.TasksForRange(ctx, user.ID, start, end)
+	tasks, err := s.store.TasksForRange(ctx, user.ID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return tasksInLocation(tasks, location), nil
 }
 
 func (s *Service) DueReminders(ctx context.Context, now time.Time, limit int) ([]ReminderNotification, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	return s.store.DueReminderNotifications(ctx, now, limit)
+	notifications, err := s.store.DueReminderNotifications(ctx, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range notifications {
+		location := s.locationForUser(&notifications[i].User)
+		notifications[i].Task = *taskInLocation(&notifications[i].Task, location)
+		notifications[i].Reminder = reminderInLocation(notifications[i].Reminder, location)
+	}
+	return notifications, nil
 }
 
 func (s *Service) MarkReminderSent(ctx context.Context, reminderID int64, sentAt time.Time) error {
@@ -519,7 +594,7 @@ func (s *Service) DueDigests(ctx context.Context, now time.Time, hour int, minut
 		result = append(result, DigestNotification{
 			User:       user,
 			DigestDate: digestDate,
-			Tasks:      tasks,
+			Tasks:      tasksInLocation(tasks, location),
 		})
 	}
 	return result, nil
@@ -538,8 +613,84 @@ func (s *Service) locationForUser(user *domain.User) *time.Location {
 	return s.defaultLocation
 }
 
+func normalizeParsedSchedule(parsed parser.ParseResult, now time.Time, location *time.Location) parser.ParseResult {
+	if location == nil {
+		location = time.Local
+	}
+	now = now.In(location)
+	if parsed.DueAt != nil {
+		due := parsed.DueAt.In(location)
+		parsed.DueAt = &due
+	}
+	if parsed.RemindAt != nil {
+		remind := parsed.RemindAt.In(location)
+		if remind.Before(now) && (parsed.DueAt == nil || parsed.DueAt.After(now)) {
+			remind = now.Add(5 * time.Minute)
+			if parsed.DueAt != nil && remind.After(*parsed.DueAt) {
+				remind = *parsed.DueAt
+			}
+			parsed.Warnings = append(parsed.Warnings, "remind_at_adjusted_from_past")
+		}
+		parsed.RemindAt = &remind
+	}
+	return parsed
+}
+
+func taskInLocation(task *domain.Task, location *time.Location) *domain.Task {
+	if task == nil || location == nil {
+		return task
+	}
+	if task.DueAt != nil {
+		due := task.DueAt.In(location)
+		task.DueAt = &due
+	}
+	if task.RemindAt != nil {
+		remind := task.RemindAt.In(location)
+		task.RemindAt = &remind
+	}
+	if task.DoneAt != nil {
+		done := task.DoneAt.In(location)
+		task.DoneAt = &done
+	}
+	if task.CancelledAt != nil {
+		cancelled := task.CancelledAt.In(location)
+		task.CancelledAt = &cancelled
+	}
+	if !task.CreatedAt.IsZero() {
+		task.CreatedAt = task.CreatedAt.In(location)
+	}
+	if !task.UpdatedAt.IsZero() {
+		task.UpdatedAt = task.UpdatedAt.In(location)
+	}
+	return task
+}
+
+func tasksInLocation(tasks []domain.Task, location *time.Location) []domain.Task {
+	for i := range tasks {
+		taskInLocation(&tasks[i], location)
+	}
+	return tasks
+}
+
+func reminderInLocation(reminder domain.TaskReminder, location *time.Location) domain.TaskReminder {
+	if location == nil {
+		return reminder
+	}
+	reminder.RemindAt = reminder.RemindAt.In(location)
+	if reminder.SentAt != nil {
+		sent := reminder.SentAt.In(location)
+		reminder.SentAt = &sent
+	}
+	if !reminder.CreatedAt.IsZero() {
+		reminder.CreatedAt = reminder.CreatedAt.In(location)
+	}
+	return reminder
+}
+
 func postponeShift(option string) (time.Duration, error) {
 	switch option {
+	case "1h":
+		return time.Hour, nil
 	case "tomorrow":
 		return 24 * time.Hour, nil
 	case "3d":

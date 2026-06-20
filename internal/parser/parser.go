@@ -359,6 +359,9 @@ func parseDate(lower string, now time.Time) (parsedDate, []string) {
 		warnings = append(warnings, "matched multiple date expressions")
 	}
 
+	if d, ok := parseEndOfMonth(lower, now); ok {
+		return parsedDate{value: d, found: true}, warnings
+	}
 	if d, ok := parseRelativeDateWord(lower, now); ok {
 		return parsedDate{value: d, found: true}, warnings
 	}
@@ -388,6 +391,7 @@ func countDateExpressions(lower string) int {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(^|[\s,])через\s+(полчаса|пол\s+часа)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])через\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`),
+		regexp.MustCompile(`(?i)(^|[\s,])((в|к|ко|до)\s+)?конц(е|у|а)\s+месяца($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])(в|во|к|ко|до|на)\s+(понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среду|среды|среде|четверг|четверга|четвергу|пятницу|пятницы|пятнице|субботу|субботы|субботе|воскресенье|воскресения|воскресение|воскресенья|воскресенью|воскресению)($|[\s,])`),
 		regexp.MustCompile(`(?i)(^|[\s,])на\s+выходных($|[\s,])`),
 		regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
@@ -399,6 +403,14 @@ func countDateExpressions(lower string) int {
 		total += len(pattern.FindAllString(lower, -1))
 	}
 	return total
+}
+
+func parseEndOfMonth(lower string, now time.Time) (time.Time, bool) {
+	re := regexp.MustCompile(`(?i)(^|[\s,])((в|к|ко|до)\s+)?конц(е|у|а)\s+месяца($|[\s,])`)
+	if !re.MatchString(lower) {
+		return time.Time{}, false
+	}
+	return time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()), true
 }
 
 func parseRelativeDateWord(lower string, now time.Time) (time.Time, bool) {
@@ -698,6 +710,7 @@ func cleanTitle(text string) string {
 		`(?i)^\s*(добавь|создай|поставь|запиши)\s+(мне\s+)?(задачу|дело|напоминание)?\s*`,
 		`(?i)(^|[\s,])через\s+(полчаса|пол\s+часа)($|[\s,])`,
 		`(?i)(^|[\s,])через\s+(?:(\d+|пару)\s+)?(минуту|минут[а-я]*|час[а-я]*|день|дня|дней|неделю|недел[а-я]*)($|[\s,])`,
+		`(?i)(^|[\s,])((в|к|ко|до)\s+)?конц(е|у|а)\s+месяца($|[\s,])`,
 		`(?i)(^|[\s,])((в|во|к|ко|до|на)\s+)?(послезавтра|сегодня|завтра)($|[\s,])`,
 		`(?i)(^|[\s,])(в|во|к|ко|до|на)\s+(понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среду|среды|среде|четверг|четверга|четвергу|пятницу|пятницы|пятнице|субботу|субботы|субботе|воскресенье|воскресения|воскресение|воскресенья|воскресенью|воскресению)($|[\s,])`,
 		`(?i)(^|[\s,])на\s+выходных($|[\s,])`,

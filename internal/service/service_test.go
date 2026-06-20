@@ -139,6 +139,52 @@ func TestRecurringTaskDoneAdvancesScheduleWithoutClosingTask(t *testing.T) {
 	}
 }
 
+func TestPostponeReminderDoesNotMoveDueAt(t *testing.T) {
+	ctx := context.Background()
+	loc := mustLocation(t)
+	store := newFakeStore()
+	svc := New(store, "Europe/Moscow", loc)
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 0, 0, 0, loc)
+	}
+
+	user := domain.TelegramUser{TelegramID: 1001, Username: "ivan"}
+	created, err := svc.CreateTaskFromText(ctx, user, "сегодня в 12:00 написать Леше")
+	if err != nil {
+		t.Fatalf("CreateTaskFromText error: %v", err)
+	}
+
+	svc.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 30, 0, 0, loc)
+	}
+	updated, err := svc.PostponeReminder(ctx, user, created.Task.ID, "1h")
+	if err != nil {
+		t.Fatalf("PostponeReminder error: %v", err)
+	}
+	if updated.Status != domain.StatusPlanned {
+		t.Fatalf("status = %s, want planned", updated.Status)
+	}
+	assertServiceTimePtr(t, "due", updated.DueAt, ptrServiceTime(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)))
+	assertServiceTimePtr(t, "remind", updated.RemindAt, ptrServiceTime(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)))
+
+	var sentOld int
+	var activeNew int
+	for _, reminder := range store.reminders {
+		if reminder.TaskID != created.Task.ID {
+			continue
+		}
+		switch {
+		case reminder.SentAt != nil:
+			sentOld++
+		case reminder.RemindAt.Equal(time.Date(2026, 6, 20, 12, 0, 0, 0, loc)):
+			activeNew++
+		}
+	}
+	if sentOld != 1 || activeNew != 1 {
+		t.Fatalf("reminders sentOld=%d activeNew=%d, want 1/1; reminders=%+v", sentOld, activeNew, store.reminders)
+	}
+}
+
 func TestLinkedProfileAssigneeResolution(t *testing.T) {
 	ctx := context.Background()
 	loc := mustLocation(t)

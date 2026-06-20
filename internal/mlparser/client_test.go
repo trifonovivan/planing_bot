@@ -60,6 +60,72 @@ func TestClientParseSuccess(t *testing.T) {
 	}
 }
 
+func TestClientPrefersRuleScheduleForDeterministicRelativeTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"output": {
+				"title": "написать леше",
+				"due_at": "2026-06-20T02:51:00+03:00",
+				"remind_at": "2026-06-20T01:51:00+03:00",
+				"priority": "p1",
+				"category": null,
+				"assignee": null,
+				"repeat": null,
+				"status": "success",
+				"clarification_reason": null
+			},
+			"confidence": 0.81
+		}`))
+	}))
+	defer server.Close()
+
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 2, 21, 0, 0, loc)
+	result, err := New(server.URL).Parse(context.Background(), "Написать Леше через полчаса", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	assertTime(t, result.DueAt, time.Date(2026, 6, 20, 2, 51, 0, 0, loc))
+	assertTime(t, result.RemindAt, time.Date(2026, 6, 20, 2, 26, 0, 0, loc))
+	if !containsWarning(result.Warnings, "rule_parser_schedule_used") {
+		t.Fatalf("warnings = %#v, want rule_parser_schedule_used", result.Warnings)
+	}
+}
+
+func TestClientPrefersRuleScheduleForEndOfMonth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"output": {
+				"title": "оплатить интернет",
+				"due_at": "2026-07-01T01:45:00+03:00",
+				"remind_at": "2026-07-01T00:45:00+03:00",
+				"priority": "p2",
+				"category": "finance",
+				"assignee": null,
+				"repeat": null,
+				"status": "success",
+				"clarification_reason": null
+			},
+			"confidence": 0.81
+		}`))
+	}))
+	defer server.Close()
+
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 2, 31, 0, 0, loc)
+	result, err := New(server.URL).Parse(context.Background(), "В конце месяца оплатить инет", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	assertTime(t, result.DueAt, time.Date(2026, 6, 30, 23, 59, 0, 0, loc))
+	assertTime(t, result.RemindAt, time.Date(2026, 6, 30, 10, 0, 0, 0, loc))
+	if !containsWarning(result.Warnings, "rule_parser_schedule_used") {
+		t.Fatalf("warnings = %#v, want rule_parser_schedule_used", result.Warnings)
+	}
+}
+
 func TestClientFallsBackToRuleParserOnHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)

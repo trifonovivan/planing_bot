@@ -79,6 +79,7 @@ func (c *Client) Parse(ctx context.Context, text string, now time.Time, location
 	if location == nil {
 		location = time.Local
 	}
+	ruleResult, ruleErr := parser.Parse(text, now, location)
 
 	body, err := json.Marshal(parseRequest{
 		Text:     text,
@@ -114,11 +115,25 @@ func (c *Client) Parse(ctx context.Context, text string, now time.Time, location
 	if err != nil {
 		return result, err
 	}
+	result = preferRuleSchedule(result, ruleResult, ruleErr)
 	result.Warnings = append(result.Warnings, "ml_parser_used")
 	if parsed.TimeSource != "" {
 		result.Warnings = append(result.Warnings, "ml_parser_time_source: "+parsed.TimeSource)
 	}
 	return result, nil
+}
+
+func preferRuleSchedule(result parser.ParseResult, ruleResult parser.ParseResult, ruleErr error) parser.ParseResult {
+	if ruleErr != nil || ruleResult.DueAt == nil {
+		return result
+	}
+	result.DueAt = ruleResult.DueAt
+	result.RemindAt = ruleResult.RemindAt
+	if ruleResult.RecurrenceRule != nil {
+		result.RecurrenceRule = ruleResult.RecurrenceRule
+	}
+	result.Warnings = append(result.Warnings, "rule_parser_schedule_used")
+	return result
 }
 
 func (r parseResponse) toParseResult(location *time.Location) (parser.ParseResult, error) {
