@@ -137,6 +137,39 @@ func TestClientPrefersRuleScheduleForEndOfMonth(t *testing.T) {
 	}
 }
 
+func TestClientPrefersRuleScheduleForEveningTaskWithReminder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"output": {
+				"title": "кирюхе купить пива на вечер",
+				"due_at": "2026-06-21T01:22:00+03:00",
+				"remind_at": "2026-06-21T00:22:00+03:00",
+				"priority": "p1",
+				"category": "shopping",
+				"assignee": null,
+				"repeat": null,
+				"status": "success",
+				"clarification_reason": null
+			},
+			"confidence": 0.81
+		}`))
+	}))
+	defer server.Close()
+
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 14, 32, 0, 0, loc)
+	result, err := New(server.URL).Parse(context.Background(), "Кирюха купи пива на вечер, напомни в 17:00", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	assertTime(t, result.DueAt, time.Date(2026, 6, 20, 19, 0, 0, 0, loc))
+	assertTime(t, result.RemindAt, time.Date(2026, 6, 20, 17, 0, 0, 0, loc))
+	if !containsWarning(result.Warnings, "rule_parser_schedule_used") {
+		t.Fatalf("warnings = %#v, want rule_parser_schedule_used", result.Warnings)
+	}
+}
+
 func TestClientPrefersRuleCategoryOverModelCategory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -42,6 +42,12 @@ class TimeRulesTest(unittest.TestCase):
         self.assertEqual("2026-06-20T19:00:00+03:00", result.due_at.isoformat())
         self.assertEqual("2026-06-20T18:00:00+03:00", result.remind_at.isoformat())
 
+    def test_evening_task_with_absolute_reminder(self) -> None:
+        base = datetime(2026, 6, 20, 14, 32, tzinfo=timezone(timedelta(hours=3)))
+        result = resolve_time("Кирюха купи пива на вечер, напомни в 17:00", base)
+        self.assertEqual("2026-06-20T19:00:00+03:00", result.due_at.isoformat())
+        self.assertEqual("2026-06-20T17:00:00+03:00", result.remind_at.isoformat())
+
     def test_end_of_month_variants(self) -> None:
         result = resolve_time("в конце месяца оплатить инет", self.base)
         self.assertEqual("2026-06-30T23:59:00+03:00", result.due_at.isoformat())

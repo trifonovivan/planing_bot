@@ -404,6 +404,21 @@ func TestExplicitReminderClause(t *testing.T) {
 	}
 }
 
+func TestExplicitReminderWithEveningTask(t *testing.T) {
+	loc := mustLocation(t)
+	now := time.Date(2026, 6, 20, 14, 32, 0, 0, loc)
+
+	got, err := Parse("Кирюха купи пива на вечер, напомни в 17:00", now, loc)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if got.Title != "Кирюха купи пива" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	assertTimePtr(t, "due", got.DueAt, ptrTime(time.Date(2026, 6, 20, 19, 0, 0, 0, loc)))
+	assertTimePtr(t, "remind", got.RemindAt, ptrTime(time.Date(2026, 6, 20, 17, 0, 0, 0, loc)))
+}
+
 func TestMessageVariantsCorpus(t *testing.T) {
 	loc := mustLocation(t)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, loc) // Saturday.

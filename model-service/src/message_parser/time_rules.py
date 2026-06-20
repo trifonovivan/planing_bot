@@ -13,6 +13,8 @@ DAY_PARTS = {
     "днем": (13, 0),
     "днём": (13, 0),
     "после обеда": (14, 0),
+    "на вечер": (19, 0),
+    "вечер": (19, 0),
     "вечером": (19, 0),
     "ночью": (23, 0),
 }
@@ -72,13 +74,24 @@ class TimeResolution:
 
 def resolve_time(text: str, base_time: datetime) -> TimeResolution:
     normalized = normalize_text(text)
-    due, source = _resolve_due(normalized, base_time)
+    due_text = _strip_explicit_reminder_clause(normalized)
+    due, source = _resolve_due(due_text, base_time)
     if due is None:
         return TimeResolution(source="none")
-    remind = _resolve_reminder(normalized, due)
+    remind = _resolve_reminder(normalized, due, base_time)
     if remind is None:
         remind = due - timedelta(hours=1)
     return TimeResolution(due_at=due, remind_at=remind, source=source)
+
+
+def _strip_explicit_reminder_clause(text: str) -> str:
+    match = re.search(r"(^|[\s,])напомни\b", text)
+    if match is None:
+        return text
+    prefix = text[: match.start()].strip(" \t\r\n,")
+    if not prefix or prefix in {"пожалуйста", "плиз", "плз"}:
+        return text
+    return prefix
 
 
 def _resolve_due(text: str, base_time: datetime) -> tuple[datetime | None, str]:
@@ -88,12 +101,12 @@ def _resolve_due(text: str, base_time: datetime) -> tuple[datetime | None, str]:
 
     date_value, date_kind = _date_due(text, base_time)
     if date_value is None:
-        day_part_time = _day_part_only_due(text, base_time)
-        if day_part_time is not None:
-            return day_part_time, "day_part"
         clock_time = _clock_only_due(text, base_time)
         if clock_time is not None:
             return clock_time, "clock"
+        day_part_time = _day_part_only_due(text, base_time)
+        if day_part_time is not None:
+            return day_part_time, "day_part"
         work_time = _workday_due(text, base_time)
         if work_time is not None:
             return work_time, "workday"
@@ -258,7 +271,7 @@ def _clock_only_due(text: str, base_time: datetime) -> datetime | None:
     return due
 
 
-def _resolve_reminder(text: str, due_at: datetime) -> datetime | None:
+def _resolve_reminder(text: str, due_at: datetime, base_time: datetime) -> datetime | None:
     match = re.search(r"\bнапомни\s+за\s+(\d+)\s+(минут[а-я]*|час[а-я]*|дн[яей]*)\b", text)
     if match is not None:
         amount = int(match.group(1))
@@ -274,6 +287,21 @@ def _resolve_reminder(text: str, due_at: datetime) -> datetime | None:
         return due_at - timedelta(hours=1)
     if re.search(r"\bнапомни\s+за\s+день\b", text):
         return due_at - timedelta(days=1)
+
+    match = re.search(r"\bнапомни(?:\s+\S+){0,4}?\s+(?:(сегодня|завтра|послезавтра)\s+)?(?:в|к)\s+(\d{1,2})(?::(\d{2}))?\b", text)
+    if match is not None:
+        day_word = match.group(1)
+        hour = int(match.group(2))
+        minute = int(match.group(3) or 0)
+        day = base_time
+        if day_word == "завтра":
+            day = base_time + timedelta(days=1)
+        elif day_word == "послезавтра":
+            day = base_time + timedelta(days=2)
+        remind = _with_clock(day, hour, minute)
+        if day_word is None and remind <= base_time:
+            remind = remind + timedelta(days=1)
+        return remind
     return None
 
 
