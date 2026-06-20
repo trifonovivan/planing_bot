@@ -31,6 +31,7 @@ type Bot struct {
 
 	mu                    sync.Mutex
 	pendingInviteTokens   map[int64]string
+	pendingLinkCreates    map[int64]time.Time
 	pendingClarifications map[int64]pendingClarification
 }
 
@@ -67,6 +68,7 @@ func New(token string, service *service.Service, opts ...Option) *Bot {
 		httpClient:            &http.Client{Timeout: 60 * time.Second},
 		service:               service,
 		pendingInviteTokens:   make(map[int64]string),
+		pendingLinkCreates:    make(map[int64]time.Time),
 		pendingClarifications: make(map[int64]pendingClarification),
 	}
 	for _, opt := range opts {
@@ -150,6 +152,11 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, helpText(), nil)
 	case "/add":
 		return b.sendMessage(ctx, message.Chat.ID, "Напиши задачу обычным текстом, например: завтра в 18:00 оплатить интернет", nil)
+	case "/cancel":
+		b.forgetPendingInvite(user.TelegramID)
+		b.forgetPendingLinkCreate(user.TelegramID)
+		b.forgetClarification(user.TelegramID)
+		return b.sendMessage(ctx, message.Chat.ID, "Ок, отменил.", nil)
 	case "/today":
 		tasks, err := b.service.Today(ctx, user)
 		if err != nil {
@@ -164,11 +171,12 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, formatTaskList("Ближайшие 7 дней", tasks), nil)
 	case "/link", "/invite":
 		if args == "" {
-			return b.sendMessage(ctx, message.Chat.ID, "Напиши алиасы для человека через запятую: /link мама, мам, Таня", nil)
+			b.rememberPendingLinkCreate(user.TelegramID)
+			return b.sendMessage(ctx, message.Chat.ID, "Напиши алиасы для человека через запятую одним сообщением.\n\nНапример: мама, мам, Таня\n\nДля отмены: /cancel", nil)
 		}
 		result, err := b.service.CreateProfileLinkInvite(ctx, user, splitAliases(args))
 		if err != nil {
-			return err
+			return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 		}
 		return b.sendMessage(ctx, message.Chat.ID, formatInvite(result, b.botUsername), nil)
 	case "/accept":
@@ -189,11 +197,27 @@ func (b *Bot) handleMessage(ctx context.Context, message message) error {
 		return b.sendMessage(ctx, message.Chat.ID, formatLinkedProfiles(profiles), nil)
 	default:
 		if token, ok := b.pendingInvite(user.TelegramID); ok {
+			if isCancelText(text) {
+				b.forgetPendingInvite(user.TelegramID)
+				return b.sendMessage(ctx, message.Chat.ID, "Ок, не принимаю инвайт.", nil)
+			}
 			if _, err := b.service.AcceptProfileLinkInvite(ctx, user, token, splitAliases(text)); err != nil {
 				return formatProfileLinkError(ctx, b, message.Chat.ID, err)
 			}
 			b.forgetPendingInvite(user.TelegramID)
 			return b.sendMessage(ctx, message.Chat.ID, "Связка профилей активна. Теперь можно ставить задачи друг другу по алиасам.", nil)
+		}
+		if _, ok := b.pendingLinkCreate(user.TelegramID); ok {
+			if isCancelText(text) {
+				b.forgetPendingLinkCreate(user.TelegramID)
+				return b.sendMessage(ctx, message.Chat.ID, "Ок, не создаю инвайт.", nil)
+			}
+			result, err := b.service.CreateProfileLinkInvite(ctx, user, splitAliases(text))
+			if err != nil {
+				return formatProfileLinkError(ctx, b, message.Chat.ID, err)
+			}
+			b.forgetPendingLinkCreate(user.TelegramID)
+			return b.sendMessage(ctx, message.Chat.ID, formatInvite(result, b.botUsername), nil)
 		}
 		if pending, ok := b.pendingClarification(user.TelegramID); ok {
 			return b.handleAssigneeClarification(ctx, message, user, text, pending)
@@ -327,6 +351,25 @@ func (b *Bot) forgetPendingInvite(telegramID int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.pendingInviteTokens, telegramID)
+}
+
+func (b *Bot) rememberPendingLinkCreate(telegramID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pendingLinkCreates[telegramID] = time.Now()
+}
+
+func (b *Bot) pendingLinkCreate(telegramID int64) (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	createdAt, ok := b.pendingLinkCreates[telegramID]
+	return createdAt, ok
+}
+
+func (b *Bot) forgetPendingLinkCreate(telegramID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.pendingLinkCreates, telegramID)
 }
 
 func (b *Bot) rememberClarification(telegramID int64, pending pendingClarification) {
